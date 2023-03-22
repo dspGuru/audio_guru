@@ -2,28 +2,34 @@ import math, sys, wave
 import numpy as np
 from scipy.fftpack import fft, rfft
 from scipy import signal
-import librosa
+import librosa as lr
 
 class AudioStats:
 
-    def __init__(self, audio=None, fs=1.0):
+    def __init__(self, audio=None, fs=1.0, name=None):
         self.audio = audio
         self.fs = fs
+        self.name = name
+
+    def db(self, pwr):
+        return lr.power_to_db(pwr, amin=1e-12)
 
     def gen_test_audio(self):
-        # Generate
-        sr = 44100
-        freq = 100
-        x = librosa.tone(freq, sr=sr, length=sr)
-        x2 = librosa.tone(2*freq, sr=sr, length=sr) * 0.01
+        # Generate a fundamental and a smaller harmonic
+        fs = 44100
+        freq = 1000
+        thd = 0.01
+        x = lr.tone(freq, sr=fs, length=fs)
+        x2 = lr.tone(2*freq, sr=fs, length=fs) * thd
         x += x2
         
         # Store audio and fs in self
         self.audio = x
-        self.fs = sr
+        self.fs = fs
     
     def load(self, fname):
-        self.audio, self.fs = librosa.load(fname, sr=None)
+        self.audio, self.fs = lr.load(fname, sr=None)
+        self.name = fname
 
     def analyze(self):
         # Get zero-crossings
@@ -85,17 +91,18 @@ class AudioStats:
         sfdr_pwr = max(harm_pwr[2:])
 
         # Calculate statistics from powers
-        self.dc = 10*math.log10(harm_pwr[0])
-        self.snr = 10*math.log10(noise_pwr / fund_pwr)
-        self.sfdr = 10*math.log10(sfdr_pwr / fund_pwr)
-        self.sinad = 10*math.log10((noise_pwr + dist_pwr) / fund_pwr)
-        self.thd = math.sqrt(dist_pwr/fund_pwr)
-        self.thd_pct = self.thd * 100.0
-        self.thd_db = 20*math.log10(self.thd)
+        self.dc = self.db(harm_pwr[0])
+        self.snr = self.db(noise_pwr / fund_pwr)
+        self.sfdr = self.db(sfdr_pwr / fund_pwr)
+        self.sinad = self.db((noise_pwr + dist_pwr) / fund_pwr)
+        self.thd = self.db(dist_pwr/fund_pwr)
+        self.thd_pct = math.sqrt(dist_pwr/fund_pwr) * 100.0
 
-    def print_stats(self):
+    def print(self):
         print('Audio Statistics')
         print('-----------------------')
+        if self.name:
+            print( f'Name    = {self.name}')
         print(f'Samples = {len(self.audio)}')
         print(f'Min     = {min(self.audio):6.3f}')
         print(f'Max     = {max(self.audio):6.3f}')
@@ -105,8 +112,26 @@ class AudioStats:
         print(f'SNR     = {self.snr:3.1f} dB')
         print(f'SFDR    = {self.sfdr:3.1f} dB')
         print(f'SINAD   = {self.sinad:3.1f} dB')
-        print(f'THD     = {self.thd_db:3.1f} dB')
+        print(f'THD     = {self.thd:3.1f} dB')
         print(f'THD     = {self.thd_pct:.3f}%')
+
+    def stats(self):
+        return {
+                'Samples':len(self.audio),
+                'Min':min(self.audio),
+                'Max':max(self.audio),
+                'Fs':self.fs,
+                'Freq':self.freq,
+                'DC':self.dc,
+                'SNR':self.snr,
+                'SFDR':self.sfdr,
+                'SINAD':self.sinad,
+                'THD':self.thd,
+                'THD%':self.thd_pct
+               }
+    
+    def stats_index(self):
+        return [ 'Samples', 'Min', 'Max', 'Fs', 'Freq', 'DC', 'SNR', 'SFDR', 'SINAD', 'THD', 'THD%' ]
 
 if __name__ == "__main__":
     a = AudioStats()
@@ -116,4 +141,5 @@ if __name__ == "__main__":
         print("Generating test audio")
         a.gen_test_audio()
     a.analyze()
-    a.print_stats()
+    a.print()
+

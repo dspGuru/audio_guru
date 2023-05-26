@@ -63,24 +63,20 @@ class AudioStats:
         self.fund = fund
 
         # Extract the power of DC, harmonics, and noise:
-        # - DC is 'harmonic' 0, fundamental is 1, etc.
-        # - Noise is the power of all other bins
-        signal_pwr = 0.0
-        noise_pwr = 0.0
-        harm_pwr = []
-        n = 0
-        for i in range(len(pwr)):
-            if i >= (n*fund - w_tol) and i <= (n*fund + w_tol):
-                signal_pwr += pwr[i]
-            else:
-                noise_pwr += pwr[i]
-            if i > (n+0.5)*fund:
-                harm_pwr.append(signal_pwr)
-                signal_pwr = 0.0
-                n += 1
+        #   DC is power of bins < w_tol, stored as harmonic 0
+        #   Fundamental is harmonic 1
+        #   Distortion is harmonic 2 +  3, etc
+        #   Noise is the power of all other bins
+        harm_pwr = [sum(pwr[0:w_tol])]
+        f = fund
+        while (f + w_tol) < len(pwr):
+            harm_pwr.append(sum(pwr[f - w_tol:f + w_tol]))
+            f += fund
+
+        noise_pwr = sum(pwr) - sum(harm_pwr)
                 
-        # Normalize the noise power and all harmonics by the power
-        # of the fundamental
+        # Normalize the noise power and all harmonics (including DC ) by the
+        # fundamental power
         noise_pwr /= harm_pwr[1]
         harm_pwr /= harm_pwr[1]
 

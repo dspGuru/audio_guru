@@ -254,7 +254,7 @@ class AudioAnalyzer:
         return [ 'Samples', 'Min', 'Max', 'Fs', 'Freq' ]
 
 def main():
-    # Create argument parser
+    # Create and configure argument parser
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -301,11 +301,12 @@ def main():
             stats.append(a.analyze())
             a.print(args)
 
-        if stats and args.table:
+        # Print stats table if specified
+        if args.table:
             AudioStats().print_header()
-        stats.sort(key=lambda st: st.thd)
-        for stat in stats:
-            stat.print()
+            stats.sort(key=lambda st: st.thd)
+            for stat in stats:
+                stat.print()
 
 if __name__ == "__main__":
     main()

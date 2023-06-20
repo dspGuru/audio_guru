@@ -9,6 +9,12 @@ import librosa as lr
 import argparse
 import glob
 
+class AudioComp:
+
+    def __init__(self, freq, pwr):
+        self.freq = freq
+        self.pwr = pwr
+
 class AudioStats:
 
     min_db = -120.0
@@ -141,10 +147,10 @@ class AudioAnalyzer:
             last = min(center + w_tol, last_bin)
             pwr = sum(bins[first:last])
             bins[first:last] = 0
-            self.comps.append( (self.bin_to_freq(center), pwr) )
+            self.comps.append( AudioComp(self.bin_to_hz(center), pwr) )
         self.noise = sum(bins)
 
-    def bin_to_freq(self, bin):
+    def bin_to_hz(self, bin):
         return self.fs * 0.5 * bin / len(self.bins)
 
     def freq_to_bin(self, freq):
@@ -162,18 +168,19 @@ class AudioAnalyzer:
         
         # The fundamental signal frequency is the bin with the
         # largest power at index 0
-        self.freq = self.comps[0][0]
-        self.sig_pwr = self.comps[0][1]
+        self.freq = self.comps[0].freq
+        self.sig_pwr = self.comps[0].pwr
 
         # Compare the second-largest power with the first to
         # determine if this is a two-tone signal
-        if(self.comps[1][1] < 0.001*self.comps[0][1]):      # 0.001 = 0.1% = -30 dB
-            # second-largest is small: single tone signal
+        if((self.comps[1].pwr < 0.001*self.comps[0].pwr)      # 0.001 = 0.1% = -30 dB
+           or (abs(self.comps[1].freq - 2*self.comps[0].pwr) < 5)):
+            # second-largest is a harmonic: single tone signal
             start = 1
             dist = [n * self.freq for n in range(20)]
         else:
-            # second-largest is big: two-tone signal
-            self.freq2 = self.comps[1][0]
+            # second-largest is a not a harmonic: two-tone signal
+            self.freq2 = self.comps[1].freq
             start = 2
 
             # Calculate distortion frequencies for two-tone signal
@@ -188,12 +195,12 @@ class AudioAnalyzer:
         sfdr_pwr = 0.0
         dist_pwr = 0.0
         noise_pwr = self.noise
-        for (f, pwr) in self.comps[start:]:
-            sfdr_pwr = max(sfdr_pwr, pwr)
-            if self.freq_in_list(f, dist):
-                dist_pwr += pwr
+        for comp in self.comps[start:]:
+            sfdr_pwr = max(sfdr_pwr, comp.pwr)
+            if self.freq_in_list(comp.freq, dist):
+                dist_pwr += comp.pwr
             else:
-                noise_pwr += pwr
+                noise_pwr += comp.pwr
 
         stats = AudioStats()
 
@@ -223,9 +230,9 @@ class AudioAnalyzer:
         # Print components in dB relative to signal power
         print('Components')
         print('-----------------------')        
-        for (freq, pwr) in self.comps:
-            freq = round(freq)
-            db = self.db(pwr/self.sig_pwr)
+        for comp in self.comps:
+            freq = round(comp.freq)
+            db = self.db(comp.pwr/self.sig_pwr)
             print(f'  {freq:5} Hz = {db:6.1f} dB')
 
     def print(self, args):

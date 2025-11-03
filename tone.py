@@ -1,7 +1,7 @@
 """Audio tone classes
 """
 
-from db import *
+from util import *
 
 class Tone:
     """Audio tone, represented as a frequency and power."""

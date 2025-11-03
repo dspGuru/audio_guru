@@ -1,10 +1,9 @@
 """Calculates statistics for audio tone samples
 """
 
-import argparse, glob
-from analyzer import *
-from db import *
-from stats import *
+import argparse
+from util import *
+from stats_list import *
 
 def get_args():
     """Get command-line arguments."""
@@ -53,35 +52,32 @@ def get_args():
                        help='statistics table sorted by SFDR')
     
     parser.set_defaults(order='thd')
-    # Parse arguments
+
+    # Return parsed arguments
     return parser.parse_args()
+
 
 def main():
     # Get command-line arguments
     args = get_args()
-
-    # Create an audio analyzer object
-    a = Analyzer()
 
     # Create empty audio statistics list
     stats = StatsList()
 
     # Generate if specified
     if args.generate:
-        for thd in (0.01, 0.001, 0.0001):
-            a.sample.generate(1000.0, thd)
-            stats.append(a.analyze())
+        stats.generate((0.01, 0.0001, 1e-6))
     
-    # Load, analyze, and print input files if specified 
-    fnames = glob.glob(args.pattern)
-    if fnames:
-        for fname in fnames:
-            if(a.load(fname)):
-                stats.append(a.analyze())
-                a.print(args)
+    # Load and analyze input files if specified 
+    if args.pattern:
+        stats.load(args)
     elif not args.generate:
-        print('No files found')
-    print()
+        print('No files found.')
+
+    # Return if no audio data is present
+    if not stats:
+        print('No audio data present.')
+        return
 
     # Get the corresponding data frame
     df = stats.get_dataframe()
@@ -98,10 +94,10 @@ def main():
     # Write the dataframe if specified
     if args.write_csv:
         try:
-            if df is None or df.empty:
+            if df.empty:
                 print(f"No statistics to write to '{args.write_csv}'")
             else:
-                df.to_csv(args.write_csv, index=False)
+                df.to_csv(args.write_csv, index=False, float_format='%.1f')
                 print(f"Wrote statistics to '{args.write_csv}'")
         except Exception as e:
             print(f"Failed to write CSV '{args.write_csv}': {e}")

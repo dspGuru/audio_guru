@@ -1,20 +1,20 @@
-"""Audio sample classes
+"""Audio sample classes and utilities
 """
 
 import numpy as np
-import scipy
 from scipy.fft import rfft
 from scipy import signal
-from db import *
-from tone import *
+import loader
+from util import *
+from stats import Stats
+from tone import Tone, Tones
 
 # Alias for audio sample data, which is a NumPy array of 32-bit floats
 Audio = np.ndarray(shape=1, dtype=np.float32)
 
 class Sample:
     """Audio sample"""
-
-    min_bins = 5
+    bins_per_tone = 5    # number of frequency bins that constitute a single tone
 
     def __init__(self, audio:Audio=[], fs: float=44100.0, name: str=''):
         self.audio = audio
@@ -23,6 +23,9 @@ class Sample:
         self.bins = []
         self.tones = Tones()
         self.noise = 0.0
+
+    def __len__(self):
+        return(len(self.audio))
 
     def generate(self, freq: float=1000.0, thd: float=min_db) -> None:
         """Generate audio."""
@@ -41,10 +44,10 @@ class Sample:
         self.audio = x
         self.name = f'Generated Audio ({freq:0.1f} at {thd * 100.0:.3f}%)'
 
-    def get_bins(self):
+    def get_bins(self, sl: slice):
         """Get the audio's frequency bins."""
         # Window the signal
-        x = self.audio
+        x = self.audio[sl]
         w = signal.windows.blackmanharris(len(x))
         xw = x*w
 
@@ -61,13 +64,21 @@ class Sample:
         """Return the bin number of the frequency."""
         return round(freq / (self.fs * 0.5) * len(self.bins))
 
-    def get_components(self, w_tol=50) -> list:
+    def freq_in_list(self, f: float, freqs) -> bool:
+        """Return True if the specified frequency is in the list of frequencies."""
+        for freq in freqs:
+            freq = alias_freq(freq, self.fs)
+            if abs(f - freq) < self.bins_per_tone:
+                return True
+        return False
+
+    def get_tones(self, w_tol=50) -> list:
         """Get the audio components."""
         if(len(self.bins) == 0):
-            self.get_bins()
+            self.get_bins(slice(0, -1))
         bins = np.absolute(self.bins)
 
-        self.dc = sum(bins[0:self.freq_to_bin(2 * self.min_bins)])
+        self.dc = sum(bins[0:self.freq_to_bin(2 * self.bins_per_tone)])
         bins[0:self.freq_to_bin(10)] = 0
 
         last_bin = len(bins) - 1
@@ -83,7 +94,7 @@ class Sample:
         return self.tones
 
     def get_dbfs(self) -> float:
-        """ Return the dB relative to full scale of 1.0 (peak dBFS)."""
+        """Return the dB relative to full scale of 1.0 (peak dBFS)."""
         a = np.asarray(self.audio, dtype=np.float64)
         if a.size == 0:
             return min_db
@@ -104,13 +115,66 @@ class Sample:
         nzc = len(zc)
         freq = 0.5 * (nzc - 1) / float( zc[-1] - zc[0] ) * self.fs
         return freq
-    
-    def get_segments(self, ratio: float=0.001, seconds: float=0.1) -> list[(int, int)]:
-        """Return a list of (start, stop) index pairs where the signal's
-        absolute amplitude is below (peak * ratio) for at least the specified
-        time.
 
-        Returns indices in Python slice form: start inclusive, stop exclusive.
+    def calc_stats(self, sl=slice(0, -1)) -> bool:
+        """Calculate audio statistics in self.stats. Return True on success."""
+
+        # Return False if audio length is too small
+        if(len(self.audio) < 256):
+            return False
+        
+        self.get_bins(sl)
+        tones = self.get_tones().copy()
+        
+        # The fundamental signal frequency is the bin with the largest power,
+        # which is at index 0
+        self.tone = tones[0]
+
+        # Compare the second-largest power with the first to determine if
+        # this is a two-tone signal
+        if ((tones[1].pwr < 0.001*tones[0].pwr)      # 0.001 = 0.1% = -30 dB
+            or (abs(tones[1].freq - 2.0*tones[0].pwr) < self.bins_per_tone)):
+            # second-largest is a harmonic: single tone signal
+            start = 1
+            dist_freqs = [alias_freq(n * self.tone.freq, self.fs ) for n in range(10)]
+            self.tone2 = Tone(0.0, 0.0)
+        else:
+            # Second-largest is a not a harmonic: two-tone signal
+            self.tone2 = tones[1]
+            start = 2
+
+            # Swap tones if tone2 has a lower frequency
+            if self.tone2.freq < self.tone.freq:
+                (self.tone, self.tone2) = (self.tone2, self.tone)
+
+            # Calculate distortion frequencies for two-tone signal
+            (f1, f2) = (self.tone.freq, self.tone2.freq)
+            dist_freqs = []
+            for n in range(3):
+                for n2 in range(3):
+                    dist_freqs.append(n*f1 + n2*f2)
+                    dist_freqs.append(n*f1 - n2*f2)
+                    dist_freqs.append(-n*f1 + n2*f2)
+
+        # Extract the power of distortion and noise
+        sfdr_pwr = 0.0
+        dist_pwr = 0.0
+        noise_pwr = self.noise
+        for comp in tones[start:]:
+            sfdr_pwr = max(sfdr_pwr, comp.pwr)
+            if self.freq_in_list(comp.freq, dist_freqs):
+                dist_pwr += comp.pwr
+            else:
+                noise_pwr += comp.pwr      
+
+        # Set frequency statistics from powers
+        self.stats = Stats(self, self.tone.freq, self.tone2.freq)
+        self.stats.set_pwr(self.dc, self.tone.pwr, noise_pwr, sfdr_pwr, dist_pwr)        
+        return True
+
+    def get_slices(self, ratio: float=0.001, seconds: float=0.1) -> list[slice]:
+        """Return a list of index slices where the signal's absolute amplitude is
+        below (peak * ratio) for at least the specified time.
         """
 
         nsamples = self.fs * seconds
@@ -122,7 +186,7 @@ class Sample:
         peak = float(np.max(np.abs(a)))
         if peak == 0.0:
             # Entire signal is zero -> single segment spanning whole array if nsamples satisfied
-            return [(0, n)] if n >= nsamples else []
+            return [slice(0, -1), ] if n >= nsamples else []
 
         thresh = peak * float(ratio)
 
@@ -143,14 +207,16 @@ class Sample:
             ends = np.concatenate((ends, [n]))
 
         # pair starts and ends and filter by length
-        segments = []
+        slices = []
         for s, e in zip(starts, ends):
             if (e - s) >= nsamples:
-                segments.append((int(s), int(e)))
+                slices.append(slice(int(s), int(e)))
+        if(not slices):
+            slices.append(slice(0, -1))
 
-        return segments
+        return slices
 
-    def get_segment(self, start_idx:int, end_idx:int) -> 'Sample':
+    def get_segment(self, sl: slice):
         """Return a sample copied from the specified indices (start inclusive, end exclusive)."""
         n = int(self.audio.size) if hasattr(self.audio, "size") else 0
         start = max(0, int(start_idx))
@@ -160,71 +226,49 @@ class Sample:
         if start >= end or n == 0:
             return Sample(audio=np.array([], dtype=np.float32), fs=self.fs, name=f'{self.name} [{start}:{end}]')
 
-        a = self.audio[start:end].copy()
-        # Ensure float32 storage for consistency
-        a = np.asarray(a, dtype=np.float32)
+        # Return a copy with the specified audio slice
+        segment = Sample(audio=self.audio[sl].copy(), fs=self.fs, name=self.name)
+        return segment
 
-        ssub = Sample(audio=a, fs=self.fs, name=f'{self.name} [{start}:{end}]')
-        ssub.bins = []
-        ssub.tones = Tones()
-        ssub.noise = 0.0
-        return ssub
-
-    def split(self) -> list:
-        """Return a list of sub-samples copied from the non-silent regions of the input sample."""
-        segments = self.get_segments()
-        subs = []
+    def split(self) -> list[slice]:
+        """Return a list of audio segment slices copied from the non-silent
+        regions of the sample."""
+        segments = self.get_slices()
+        slices = []
         for start, end in segments:
             sub = self.get_segment(start, end)
             # skip empty sub-samples
             if getattr(sub.audio, "size", 0) > 0:
-                subs.append(sub)
-        return subs
+                slices.append(sub)
+        return slices
 
     def load(self, fname: str) -> bool:
-        """Load data from .wav file."""
+        """Load audio data from file."""
         self.name = fname
-
-        # Read WAV file using wave and convert to a mono float32 numpy array in [-1,1]
-        # Read WAV file using scipy.io.wavfile.read and convert to a mono float32 numpy array in [-1,1]
-        try:
-            self.fs, data = scipy.io.wavfile.read(fname)
-        except ValueError:
-            print('Invalid audio file:', fname)
-            self.fs = 1.0
-            self.audio = []
-            return False
-
-        # Convert integer PCM to float32 in [-1, 1]
-        if data.dtype == np.int16:
-            audio = data.astype(np.float32) / 32768.0
-        elif data.dtype == np.int32:
-            audio = data.astype(np.float32) / 2147483648.0
-        elif data.dtype == np.uint8:
-            audio = (data.astype(np.float32) - 128.0) / 128.0
-        elif data.dtype in (np.float32, np.float64):
-            audio = data.astype(np.float32)
-        else:
-            # Fallback: cast to float32 and normalize by max absolute value
-            audio = data.astype(np.float32)
-            maxv = np.max(np.abs(audio))
-            if maxv > 0:
-                audio /= maxv
-
-        # If multi-channel, convert to mono by averaging channels
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-
-        # Save audio in self
-        self.audio = audio
         self.bins = []
         self.tones = []
-        return True
+        self.audio, self.fs = loader.load(fname)
 
-    def stats(self) -> dict :
+        return len(self) > 0
+
+    def print(self, args) -> None:
+        """Print the specified audio statistics."""
+        if self.name:
+            print( f'{self.name}')
+
+        if args.components:
+            self.tones.print(self.tone.pwr)
+
+        if args.stats:
+            print('Stats')
+            print('-----------------------')            
+            print(self.stats)
+
+    def stats(self) -> dict:
+        """Return a dictionary of statistics"""
         freq = self.get_freq()
         dbfs = self.get_dbfs()
-        segments = self.get_segments()
+        segments = self.get_slices()
         return {
                 'Samples':len(self.audio),
                 'Min':float(min(self.audio)),

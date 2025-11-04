@@ -27,7 +27,7 @@ class Sample:
     def __len__(self):
         return(len(self.audio))
 
-    def generate(self, freq: float=1000.0, thd: float=min_db) -> None:
+    def generate(self, freq: float=1000.0, thd: float=0.001) -> None:
         """Generate audio."""
         print("Generating audio")
 
@@ -36,9 +36,8 @@ class Sample:
         x = signal.chirp(t, f0=freq, t1=t[-1], f1=freq, method='linear')
 
         # Generate and add distortion tone if THD is above the minimum dB
-        if(thd > min_db):
-            x2 = signal.chirp(t, f0=2*freq, t1=t[-1], f1=2*freq, method='linear') * thd
-            x += x2
+        x2 = signal.chirp(t, f0=2*freq, t1=t[-1], f1=2*freq, method='linear') * thd
+        x += x2
         
         # Store generated audio in self
         self.audio = x
@@ -101,10 +100,10 @@ class Sample:
         peak = float(np.max(np.abs(a)))
         return 2.0 * db(peak)
 
-    def get_freq(self) -> float:
-        """Get the audio's fundamental frequency."""
+    def get_freq(self, sl=slice(0, -1)) -> float:
+        """Get the audio's fundamental frequency from its zero-crossings."""
         # Get zero-crossings
-        zc = np.where(np.diff(np.sign(self.audio)))[0]
+        zc = np.where(np.diff(np.sign(self.audio[sl])))[0]
 
         # Remove the last zero-crossing, if necessary, to span an integer
         # number of cycles
@@ -206,14 +205,25 @@ class Sample:
         if below[-1]:
             ends = np.concatenate((ends, [n]))
 
-        # pair starts and ends and filter by length
+        # Add slices for each non-zero segment
         slices = []
+        start = 0
         for s, e in zip(starts, ends):
+            s, e = int(s), int(e)
             if (e - s) >= nsamples:
-                slices.append(slice(int(s), int(e)))
-        if(not slices):
-            slices.append(slice(0, -1))
+                if (s - start) >= nsamples:
+                    slices.append(slice(start, s))
+                start = e
 
+        # if no slices were found add a slice for the entire sample
+        if not slices:
+            try:
+                start = int(ends[0])
+            except IndexError:
+                start = 0
+            slices.append(slice(start, -1))
+
+        print(self.name, slices)
         return slices
 
     def get_segment(self, sl: slice):

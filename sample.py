@@ -1,4 +1,4 @@
-"""Audio sample classes and utilities"""
+"""Audio sample class"""
 
 import numpy as np
 from scipy.fft import rfft

@@ -3,7 +3,7 @@
 
 import math, os
 
-min_db = -120.0     # Minimum dB value which makes sense for audio
+min_db = -120.0     # The minimum dB value which makes sense for audio
 min_pwr = 1e-12     # Power ratio corresponding to min_db
 
 def db(pwr: float, ndigits:int =1):
@@ -21,8 +21,8 @@ def pwr(db_val: float) -> float:
     return 10.0 ** (max(db_val, min_db) / 10.0)
 
 def split_fname(pathname: str) -> tuple[str]:
-    """Split the given file pathname into three components, delimited by
-     underscore, and return the result as a tuple."""
+    """Split the given file pathname into three components which have been
+    delimited by underscores and return the result as a tuple."""
     base = os.path.splitext(os.path.basename(pathname))[0]
     parts = base.split('_')
     if len(parts) >= 3:

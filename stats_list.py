@@ -1,5 +1,5 @@
-"""Audio statistics list class
-"""
+"""Audio statistics list class"""
+
 import glob
 from operator import attrgetter
 from pathlib import Path

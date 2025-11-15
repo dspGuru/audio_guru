@@ -1,38 +1,23 @@
-"""Audio utilities
-"""
+"""Audio utilities"""
 
-import math, os
-
-min_db = -120.0     # The minimum dB value which makes sense for audio
-min_pwr = 1e-12     # Power ratio corresponding to min_db
-
-def db(pwr: float, ndigits:int =1):
-    """Return dB of input power ratio."""
-    try:
-        return round(10.0 * math.log10(pwr), ndigits)
-    except ValueError:
-        return min_db
-
-def pwr(db_val: float) -> float:
-    """Return power ratio of input dB.
-
-    Values below min_db are clamped to prevent underflow / -inf behavior.
-    """
-    return 10.0 ** (max(db_val, min_db) / 10.0)
+import os
 
 def split_fname(pathname: str) -> tuple[str]:
     """Split the given file pathname into three components which have been
     delimited by underscores and return the result as a tuple."""
     base = os.path.splitext(os.path.basename(pathname))[0]
     parts = base.split('_')
+
     if len(parts) >= 3:
-        return (parts[0], parts[1], '_'.join(parts[2:]))
+        (mfr, model, desc) = (parts[0], parts[1], ' '.join(parts[2:]))
     elif len(parts) == 2:
-        return (parts[0], parts[1], '')
+        (mfr, model, desc) = (parts[0], parts[1], '')
     elif len(parts) == 1:
-        return (parts[0], '', '')
-    else:
-        return ('', '', '')
+        mfr = ''
+        model = ''
+        desc = parts[0]
+    
+    return (mfr, model, desc)
 
 def alias_freq(freq: float, fs: float) -> float:
     """Alias the specified frequency into the Nyquist band [0, fs/2].
@@ -53,3 +38,25 @@ def alias_freq(freq: float, fs: float) -> float:
     
     # Return aliased frequency
     return freq
+
+def is_harmonic(freq: float, fund: float, fs: float, order: int, tol_hz:float =5.0) -> bool:
+    """Return True if freq is a harmonic of fundamental up to the specified
+     order, considering aliasing into the Nyquist band.
+
+    The function aliases both the candidate harmonic (k*freq) and freq2 into
+    [0, fs/2] using alias_freq() and tests for proximity within a tolerance.
+    """
+    # Return fale if any input is invalid
+    if fund <= 0.0 or freq < 0.0 or order < 1 or fs <= 0.0:
+        return False
+
+    # Alias the observed frequency once
+    target = alias_freq(freq, fs)
+
+    # Return True if the frequency is a harmonic
+    for k in range(1, order + 1):
+        harmonic = alias_freq(k * fund, fs)
+        if abs(harmonic - target) <= tol_hz:
+            return True
+
+    return False

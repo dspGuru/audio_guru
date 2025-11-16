@@ -71,6 +71,8 @@ def get_args():
 
 
 def main():
+    """Main program function."""
+
     # Get command-line arguments
     args = get_args()
 
@@ -82,7 +84,7 @@ def main():
         print("Generating audio")
         sample = AudioTest()
         for thd in (0.0, 0.01, 0.0001, 1e-5):
-            sample.generate(1000.0, thd, 10.0)
+            sample.generate(freq=1000.0, amp=0.6, secs=10.0, thd=thd)
             stat = sample.get_stats(None, args.max_length)
             stats.append(stat)
     

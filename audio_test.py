@@ -14,18 +14,63 @@ from tone import Tones
 from util import alias_freq
 from util import is_harmonic
 
-class AudioTest(Audio):
-    """Audio test"""
+BINS_PER_TONE = 5
+"""Number of frequency bins which constitute a single tone after BH windowing (empirical)"""
 
-    BINS_PER_TONE = 5           # number of frequency bins which constitute a
-                                # single tone after BH windowing (empirical)
-    MAX_DIST_ORDER = 3          # maximum harmonic distortion order to consider
-    MAX_HARM_ORDER = 5          # maximum harmonic order to consider
-    MAX_NOISE_FLOOR_DB = -30.0  # maximum noise floor in dBFS
-    MAX_TONES = 20              # maximum number of tones to identify
-    MIN_AUDIO_LEN = 256         # minimum audio length to calculate statistics
-    MIN_SPUR_RATIO = 1e-8       # threshold for distinguishing spurs from noise
-    MIN_TWO_TONE_RATIO = 1e-2   # = -20 dB
+class AudioTest(Audio):
+    """
+    Audio test
+    
+    This class extends Audio to add methods for analyzing test audio signals,
+    including identifying tones, distortion products, spurs, and noise, and
+    calculating audio statistics.
+    
+    Attributes
+    ----------
+    fs : int
+        Sampling frequency in Hz.
+    name : str
+        Name of the audio file.
+    dc : float
+        DC offset of the audio signal.
+    bins : np.ndarray
+        Frequency bins of the audio signal.
+    tones : Tones
+        Identified tones in the audio signal.
+    noise : float
+        Noise power in the audio signal.
+    tone : Tone
+        Primary tone of the audio signal.
+    tone2 : Tone
+        Secondary tone of the audio signal (for two-tone signals).
+    md : Metadata
+        Metadata associated with the audio signal.
+    segment : Segment
+        Segment of the audio signal selected for analysis.
+    """
+
+    """Static Constants"""
+
+    MAX_DIST_ORDER = 3
+    """Maximum harmonic distortion order to consider"""
+
+    MAX_HARM_ORDER = 5
+    """Maximum harmonic order to consider"""
+
+    MAX_NOISE_FLOOR_DB = -30.0
+    """Maximum noise floor in dBFS"""
+
+    MAX_TONES = 20
+    """Maximum number of tones to identify"""
+
+    MIN_AUDIO_LEN = 256
+    """Minimum audio length to calculate statistics"""
+
+    MIN_SPUR_RATIO = 1e-8
+    """Threshold for distinguishing spurs from noise"""
+
+    MIN_TWO_TONE_RATIO = 1e-2
+    """Minimum ratio for two-tone detection (-20 dB)"""
 
     def __init__(self, fs: int=44100, name: str=''):
         super().__init__(fs, name)
@@ -81,18 +126,55 @@ class AudioTest(Audio):
         return round(freq / (self.fs * 0.5) * len(self.bins))
 
 
-    def freq_in_list(self, f: float, freqs:list[float]) -> bool:
-        """Return True if the specified frequency is in the list of frequencies."""
+    def freq_in_list(self, freq: float, freqs:list[float]) -> bool:
+        """
+        Determine if the specified frequency is in the list of frequencies.
+
+        Parameters
+        ----------
+        freq : float
+            Frequency to test.
+        freqs : list[float]
+            List of frequencies to search.
+        Returns
+        -------
+        bool
+        True if the inputs are valid and the specified frequency is in the
+        list of frequencies.
+        """
+
+        # Return False if any input is invalid
+        if freq <= 0.0 or not freqs:
+            return False
+        
+        # Check if frequency is within tolerance of any frequency in the list
         for freq in freqs:
             freq = alias_freq(freq, self.fs)
-            bin_diff = self.freq_to_bin(abs(f - freq))
-            if bin_diff <= self.BINS_PER_TONE:
-                return True
+            bin_diff = self.freq_to_bin(abs(freq - freq))
+            if bin_diff <= BINS_PER_TONE:
+                return True         # frequency is in the list
+            
+        # Frequency not found in the list: return False
         return False
 
 
-    def get_tones(self, segment: Segment, w_tol=50) -> Tones:
-        """Find the audio's tones, DC, and noise. Return the tones."""
+    def get_tones(self, segment: Segment, w_tol=BINS_PER_TONE) -> Tones:
+        """
+        Find the audio's tones, DC, and noise.
+         
+        Return the tones.
+        Parameters
+        ----------
+        segment : Segment
+            Segment of audio to analyze.
+        w_tol : int
+            Tolerance for tone detection, in bins.
+            
+        Returns
+        -------
+        Tones
+            The tones found in the audio.
+        """
         self.md.segment = segment
         self.get_bins(segment)
         bins = np.absolute(self.bins)
@@ -147,8 +229,8 @@ class AudioTest(Audio):
 
         harmonic = alias_freq(2.0*tones[0].freq, self.fs)
         if ((tones[1].pwr < self.MIN_TWO_TONE_RATIO*tones[0].pwr)
-            or (self.freq_to_bin(abs(tones[1].freq - harmonic)) < self.BINS_PER_TONE)):
-            # second-largest is a harmonic: single tone signal
+            or (self.freq_to_bin(abs(tones[1].freq - harmonic)) < BINS_PER_TONE)):
+            # Second-largest is a harmonic: single tone signal
             start = 1
             dist_freqs = [alias_freq(n * self.tone.freq, self.fs ) for n in range(10)]
             self.tone2 = Tone(0.0, 0.0)
@@ -183,7 +265,7 @@ class AudioTest(Audio):
             else:
                 tone.cat = Category.Noise
 
-        # Recategorize noise tones which are harmonics of spurs as spurs
+        # Recategorize noise tones as spurs which are harmonics of spur tones
         spur_freqs = [tone.freq for tone in tones if tone.cat == Category.Spurious]
         for idx, tone in enumerate(tones):
             if tone.cat == Category.Noise:
@@ -191,8 +273,8 @@ class AudioTest(Audio):
                     if is_harmonic(tone.freq, freq, self.fs, self.MAX_HARM_ORDER):
                         tones[idx].cat = Category.Spurious
                            
-        # Calculate SFDR, distortion, and noise from tones and based on
-        # their categories and frequencies
+        # Calculate SFDR, distortion, and noise from tones and based on their
+        # categories and frequencies
         spur_pwr = 0.0
         dist_pwr = 0.0
         noise_pwr = 0.0

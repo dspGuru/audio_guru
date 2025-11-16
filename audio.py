@@ -1,10 +1,9 @@
-"""Audio data class"""
+"""Audio data"""
 
 import math
 
 import numpy as np
 import scipy.linalg as la
-from scipy import signal
 import soundfile as sf
 
 from metadata import Metadata
@@ -14,23 +13,52 @@ from tone import Tone
 from db import *
 
 class Audio:
-    """Audio data"""
+    """
+    Store and manipulate audio data.
+    
+    Attributes
+    ----------
+    data : np.ndarray
+        Audio data.
+    segment : Segment
+        Selected audio segment.
+    md : Metadata
+        Audio metadata.
+    """
 
-    DTYPE = np.float32      # audio sample data type
+    DTYPE = np.float32
+    """Audio sample data type"""
 
     def __init__(self, fs: int=44100, name: str=''):
+        """Initialize audio
+         
+        Parameters
+        ----------
+        fs : int
+            Sampling frequency in Hz.
+        name : str
+            Name of the audio.
+        """
         self.data = np.ndarray(shape=1, dtype=self.DTYPE)
         self.segment = Segment(fs)
         self.md = Metadata(name, self.segment)        
 
 
     def __len__(self):
+        """Return the length of the entire audio data."""
         return len(self.data)
 
 
     @property
     def fs(self) -> int:
-        """Return the audio's sampling frequency."""
+        """
+        Get the audio's sampling frequency.
+
+        Returns
+        -------
+        int
+            The sampling frequency in Hz.
+        """
         return self.segment.fs
 
 
@@ -48,7 +76,7 @@ class Audio:
 
     @property
     def rms(self) -> float:
-        """Return the RMS value of the audio."""
+        """Return the RMS value of the selected audio."""
         a = self.data[self.segment.slice]
         if a.size == 0:
             return 0.0
@@ -58,7 +86,15 @@ class Audio:
 
     @property
     def freq(self) -> float:
-        """Return the audio's fundamental frequency from its zero-crossings."""
+        """
+        Get the fundamental frequency of the selected audio from its zero-
+        crossings.
+
+        Returns
+        -------
+        float
+            The fundamental frequency in Hz.
+        """
         # Get zero-crossings
         zc = np.where(np.diff(np.sign(self.data[self.segment.slice])))[0]
 
@@ -74,7 +110,14 @@ class Audio:
 
 
     def select(self, segment:Segment | None=None) -> None:
-        """Select the specified segment for subsequent operations."""
+        """
+        Select the specified segment for subsequent operations.
+        
+        Parameters
+        ----------
+        segment : Segment | None
+            Segment to select. If None, select the entire audio.
+        """
         if segment is None:
             # Select the entire audio
             self.segment = Segment(self.fs, 0, len(self.data) - 1)
@@ -83,7 +126,14 @@ class Audio:
 
 
     def append(self, other) -> None:
-        """Append the other audio to self"""
+        """
+        Append the other audio to self
+        
+        Parameters
+        ----------
+        other : Audio | array-like
+            Audio or array-like buffer to append.
+        """
         # Support appending from another Audio or any array-like audio buffer
         if isinstance(other, Audio):
             arr = other.audio
@@ -101,31 +151,61 @@ class Audio:
             self.data = np.concatenate((np.asarray(self.data, dtype=self.DTYPE), arr))
 
 
-    def generate(self, freq: float=1000.0, thd: float=MIN_PWR,
-                 secs: float=10.0) -> None:
-        """Generate audio."""
+    def generate(
+            self,
+            freq: float=1000.0,
+            amp: float=0.6,
+            secs: float=10.0,
+            thd: float=MIN_PWR
+        ) -> None:
+        """
+        Generate audio.
+        
+        Parameters
+        ----------
+        freq : float
+            Frequency of the tone in Hz.
+        amp : float
+            Peak amplitude) of the tone (0.0 to 1.0).
+        secs : float
+            Duration of the generated audio in seconds.
+        thd : float
+            Total harmonic distortion as a fraction of the fundamental. If
+            less than MIN_PWR no distortion tone is generated.            
+        """
 
         # Generate tone at the specified frequency
-        pwr = 0.6
-        t = Tone(freq, pwr)
+        t = Tone(freq, amp)
         self.data = t.generate(secs, self.fs)
 
         # If specified, generate distortion tone at twice the nominal frequency
         if thd > MIN_PWR:
-            t2 = Tone(2.0 * freq, thd*pwr)
+            t2 = Tone(2.0 * freq, thd*amp)
             self.data += t2.generate(secs, self.fs)
             thd_str = f'{(thd * 100.0):0.3f}%'
         else:
             thd_str = ''
+
+        # Set metadata
         freq_str = f'{freq:0.1f}' if freq < 1000.0 else f'{math.trunc(freq / 1000.0)}k'
         self.md.set(mfr='Gen', desc=freq_str, model=thd_str)
 
 
-    def get_segments(self, ratio: float=1e-3, secs: float=0.1,
-                     silent: bool=False) -> Segments:
-        """Return a list of audio segments where the signal's absolute amplitude
-        is above (peak * ratio) or below (silent) for at least the specified
-        time.
+    def get_segments(
+            self, ratio: float=1e-3, secs: float=0.1, silent: bool=False) -> Segments:
+        """
+        Get a list of audio segments whose absolute amplitude is above
+        (peak * ratio) or below (silent) for at least the specified time.
+
+        Parameters
+        ----------
+        ratio : float
+            Ratio of peak amplitude to use as threshold for segment detection.
+        secs : float
+            Minimum duration in seconds for a segment to be included.
+        silent : bool
+            If True, return segments where the signal is below the threshold.
+            If False, return segments where the signal is above the threshold.
         """
 
         # Initialize return value
@@ -189,10 +269,27 @@ class Audio:
 
 
     def get_noise_floor(self, secs: float=0.25) -> (float, int):
-        """Return the audio's noise floor and the index at which it was
-        found."""
+        """
+        Get the audio's noise floor and the index at which it was found.
+
+        The noise floor is calculated as the minimum average absolute
+        amplitude over segments of the specified duration.
+
+        Parameters
+        ----------
+        secs : float
+            Duration in seconds of each segment over which the average
+            absolute amplitude is calculated.
+
+        Returns
+        -------
+        tuple(noise floor, index)
+        Return the audio's noise floor and the index at which it was
+        found.
+        """
+        # Return zero if the audio is empty
         if not len(self):
-            return 0.0
+            return (0.0, 0)
 
         # Calculate the absolute value of the audio data and average it
         # across channels if necessary
@@ -215,7 +312,19 @@ class Audio:
 
 
     def read(self, fname: str) -> bool:
-        """Read audio data from file. Retun True if successful."""
+        """
+        Read audio data from file.
+
+        Parameters
+        ----------
+        fname : str
+            File name to read.
+
+        Returns
+        -------
+        bool
+            True if successful.
+        """
         try:
             data, fs = sf.read(fname, dtype='float32')
         except Exception:
@@ -231,8 +340,14 @@ class Audio:
 
 
     def write(self, fname: str='') -> bool:
-        """Write the selected segment of audio data to file. Return True if
-          successful."""
+        """
+        Write the selected segment of audio data to file.
+
+        Returns
+        -------
+        bool
+            True if successful.
+        """
         # Write audio data using soundfile module
         if not fname:
             fname = self.md.name

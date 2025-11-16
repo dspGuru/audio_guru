@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 
 from audio_test import AudioTest
-from segment import Segment
 from stats import Stats
 
 
@@ -41,7 +40,7 @@ class StatsList(list[Stats]):
 
     def print(self, sort_stat_attr: str='thd') -> None:
         """Sort the list on the specified statistic attribute and print it."""
-        Stats.print_header()
+        Stats.print_summary_header()
         self.sort(key=attrgetter(sort_stat_attr))
         for stat in self:
             stat.print_summary()        

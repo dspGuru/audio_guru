@@ -1,29 +1,19 @@
 """Audio utilities"""
 
-import os
-
-def split_fname(pathname: str) -> tuple[str]:
-    """Split the given file pathname into three components which have been
-    delimited by underscores and return the result as a tuple."""
-    base = os.path.splitext(os.path.basename(pathname))[0]
-    parts = base.split('_')
-
-    if len(parts) >= 3:
-        (mfr, model, desc) = (parts[0], parts[1], ' '.join(parts[2:]))
-    elif len(parts) == 2:
-        (mfr, model, desc) = (parts[0], parts[1], '')
-    elif len(parts) == 1:
-        mfr = ''
-        model = ''
-        desc = parts[0]
-    
-    return (mfr, model, desc)
 
 def alias_freq(freq: float, fs: float) -> float:
-    """Alias the specified frequency into the Nyquist band [0, fs/2].
+    """
+    Alias the specified frequency into the Nyquist band [0, fs/2].
 
     This maps any real-valued frequency into the principal Nyquist interval
     by folding frequencies around multiples of the Nyquist frequency.
+
+    Parameters
+    ----------
+    freq : float
+        Frequency to alias.
+    fs : float
+        Sampling frequency, in the same units as freq.
     """
     # Convert negative frequency to positive
     freq = abs(freq)
@@ -39,24 +29,46 @@ def alias_freq(freq: float, fs: float) -> float:
     # Return aliased frequency
     return freq
 
-def is_harmonic(freq: float, fund: float, fs: float, order: int, tol_hz:float =5.0) -> bool:
-    """Return True if freq is a harmonic of fundamental up to the specified
-     order, considering aliasing into the Nyquist band.
 
-    The function aliases both the candidate harmonic (k*freq) and freq2 into
-    [0, fs/2] using alias_freq() and tests for proximity within a tolerance.
+def is_harmonic(
+        freq: float,
+        fund: float,
+        fs: float,
+        order: int,
+        tol_hz:float =5.0
+    ) -> bool:
     """
-    # Return fale if any input is invalid
+    Return True if freq is a harmonic of fundamental up to the specified
+    order, considering aliasing into the Nyquist band.
+
+    The function aliases both the candidate harmonic (n*freq) and freq2 into
+    [0, fs/2] using alias_freq() and tests for proximity within a tolerance.
+
+    Parameters
+    ----------
+    freq : float
+        Frequency to test.
+    fund : float
+        Fundamental frequency.
+    fs : float
+        Sampling frequency.
+    order : int
+        Maximum harmonic order to test.
+    tol_hz : float
+        Tolerance in Hz for harmonic matching.
+    """
+    # Return False if any input is invalid
     if fund <= 0.0 or freq < 0.0 or order < 1 or fs <= 0.0:
         return False
 
-    # Alias the observed frequency once
+    # Alias the test frequency
     target = alias_freq(freq, fs)
 
-    # Return True if the frequency is a harmonic
+    # Return True if the frequency is a harmonic of the fundamental
     for k in range(1, order + 1):
         harmonic = alias_freq(k * fund, fs)
         if abs(harmonic - target) <= tol_hz:
             return True
 
+    # No harmonic found: return False
     return False

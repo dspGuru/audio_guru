@@ -14,30 +14,60 @@ class Stats:
     """Audio Statistics"""
 
     # Sample metadata
-    md: Metadata            # samplee metadata
-    segment: Segment        # audio segment
+    md: Metadata
+    segment: Segment
 
-    # Audio  stats
-    secs: float = 0.0       # signal duration, in seconds
-    min: float = 0.0        # minimum signal value
-    max: float = 0.0        # maximum signal value
-    dbfs: float = 0.0       # signal dB below full scale
-    rms: float = 0.0        # signal RMS value
+    """Audio stats:
+    secs -- signal duration, in seconds
+    min  -- minimum signal value
+    max  -- maximum signal value
+    dbfs -- signal dB below full scale
+    rms  -- signal RMS value
+    """
+    secs: float = 0.0
+    min: float = 0.0
+    max: float = 0.0
+    dbfs: float = 0.0
+    rms: float = 0.0
 
-    # Frequency stats
-    freq: float = 0.0       # first tone frequency, in Hz
-    freq2: float = 0.0      # second tone frequency, in Hz
+    """Frequency stats:
+    freq  -- first tone frequency, in Hz
+    freq2 -- second tone frequency, in Hz
+    """
+    freq: float = 0.0
+    freq2: float = 0.0
 
-    # Power stats. All are in dB except for THD%.
-    sig: float = MIN_DB     # signal (first tone) power
-    dc: float = MIN_DB      # DC (zero Hz) power relative to signal
-    snr: float = MIN_DB     # signal-to-noise ratio
-    sfdr: float = MIN_DB    # spurious-free dynamic range
-    sinad = MIN_DB          # signal to noise-plus-distortion ratio
-    thd: float = MIN_DB     # total harmonic distortion (THD)
-    thd_pct: float = 100.0  # THD percent
+    """Power stats. All are in dB except for THD%:
+    sig   -- signal (first tone) power
+    dc    -- DC (zero Hz) power relative to signal
+    snr   -- signal-to-noise ratio
+    sfdr  -- spurious-free dynamic range
+    sinad -- signal to noise-plus-distortion ratio
+    thd   -- total harmonic distortion (THD)
+    thd_pct -- THD percent
+    """
+    sig: float = MIN_DB
+    dc: float = MIN_DB
+    snr: float = MIN_DB
+    sfdr: float = MIN_DB
+    sinad = MIN_DB
+    thd: float = MIN_DB
+    thd_pct: float = 100.0
 
     def __init__(self, audio: Audio, segment: Segment, freq:float =0.0, freq2:float =0.0):
+        """Initialize statistics from audio data and segment.
+
+        Parameters
+        ----------
+        audio : Audio
+            Audio data to analyze.
+        segment : Segment
+            Segment of audio to analyze.
+        freq : float
+            First tone frequency, in Hz.
+        freq2 : float
+            Second tone frequency, in Hz.
+        """
         # Set sample and time stats
         self.segment = segment        
         self.set_audio_stats(audio)
@@ -82,15 +112,32 @@ class Stats:
 
 
     def set_freq_stats(self, freq: float, freq2: float) -> None:
+        """
+        Set frequency statistics.
+        
+        Parameters
+        ----------
+        freq : float
+            First tone frequency, in Hz.
+        freq2 : float
+            Second tone frequency, in Hz.
+            Set to zero if not applicable.
+        """
         self.freq = freq
         self.freq2 = freq2
 
 
     def set_audio_stats(self, audio: Audio) -> None:
-        """Set sample data and statistics"""
+        """
+        Set audio sample statistics.
+        
+        Parameters
+        ----------
+        audio : Audio
+            Audio data to analyze.
+        """
         self.md = copy(audio.md)
         self.fs = audio.fs
-
         self.min = audio.min
         self.max = audio.max
         self.dbfs = dbv(self.max)
@@ -99,9 +146,27 @@ class Stats:
         self.secs = self.segment.secs
 
 
-    def set_pwr_stats(self, dc: float, sig: float, noise: float, spur: float,
-                       dist: float):
-        """Set power statistics"""
+    def set_pwr_stats(
+            self, dc: float, sig: float, noise: float, spur: float,
+            dist: float
+            ) -> None:
+        """
+        Set power statistics.
+        
+        Parameters
+        ----------  
+        dc : float
+            DC (zero Hz) power relative to signal.
+        sig : float
+            Signal (first tone) power.
+        noise : float
+            Noise power.
+        spur : float
+            Spurious power.
+        dist : float
+            Distortion power.
+        """
+        # Set basic power stats
         self.sig = sig
         self.dc = dc/sig
         self.snr = noise/sig
@@ -113,20 +178,21 @@ class Stats:
         else:
             self.sfdr = 0.0
 
-        # Calculate distortion-related values
+        # Calculate distortion-related values if signal is present
         if sig > 0.0 and (noise + dist) > MIN_PWR:
             self.sinad = sig / (noise + dist)
             self.thd = dist/sig
             self.thd_pct = round(math.sqrt(dist/sig) * 100.0, 3)
         else:
+            # No signal present: flag distortion stats as invalid
             self.sinad = 0.0
             self.thd = 0.0
             self.thd_pct = 0.0
 
 
     @staticmethod
-    def print_header() -> None:
-        """Print statistics header"""
+    def print_summary_header() -> None:
+        """Print statistics summary header"""
         print('Name                                   THD%    THD  SINAD   SFDR     F1     F2')
         print('------------------------------------------------------------------------------')
 

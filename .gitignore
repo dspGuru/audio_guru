@@ -130,3 +130,7 @@ dmypy.json
 /ref
 /samples
 /*.csv
+
+# Audio Guru specific ignores
+ref/
+*.wav

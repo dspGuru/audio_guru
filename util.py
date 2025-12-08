@@ -1,5 +1,74 @@
 """Audio utilities"""
 
+from enum import Enum
+
+
+__all__ = ["Category", "Channel", "alias_freq", "is_harmonic"]
+
+
+class Category(Enum):
+    """Enumerates categories assigned to audio signals.
+
+    Members
+    -------
+    Unknown
+        The category is not determined or does not fit any other class.
+    Tone
+        Narrowband, near-sinusoidal signal tone content.
+    Harmonic
+        Harmonic of signal tone content.
+    Distortion
+        Harmonically related artifacts produced by nonlinear processing or
+        clipping.
+    Spurious
+        Tone which is not harmonically related to any signal tones.
+    Noise
+        Noise-like content.
+    Sweep
+        Frequency-swept tone content.
+    Band
+        Band-limited noise or signal content.
+    Silence
+        Near-silence or very low-level content.
+    DC
+        Direct current (zero frequency) content.
+    """
+
+    Unknown = 0
+    Tone = 1
+    Harmonic = 2
+    Distortion = 3
+    Spurious = 4
+    Noise = 5
+    Sweep = 6
+    Band = 7
+    Silence = 8
+    DC = 9
+
+
+class Channel(Enum):
+    """Enumerates audio channel assignments.
+
+    Members
+    -------
+    Unknown
+        The channel is not determined or does not fit any other class.
+    Left
+        Left channel.
+    Right
+        Right channel.
+    Mean
+        Mean of left and right channels.
+    Difference
+        Difference between left and right channels.
+    """
+
+    Unknown = 0
+    Left = 1
+    Right = 2
+    Mean = 3
+    Difference = 4
+
 
 def alias_freq(freq: float, fs: float) -> float:
     """
@@ -23,20 +92,16 @@ def alias_freq(freq: float, fs: float) -> float:
         freq -= fs
 
     # If frequency is above Nyquist, calculate the aliased frequency
-    if freq > 0.5*fs:
+    if freq > 0.5 * fs:
         freq = fs - freq
-    
+
     # Return aliased frequency
     return freq
 
 
 def is_harmonic(
-        freq: float,
-        fund: float,
-        fs: float,
-        order: int,
-        tol_hz:float =5.0
-    ) -> bool:
+    freq: float, fund: float, fs: float, order: int, tol_hz: float = 5.0
+) -> bool:
     """
     Return True if freq is a harmonic of fundamental up to the specified
     order, considering aliasing into the Nyquist band.
@@ -65,7 +130,7 @@ def is_harmonic(
     target = alias_freq(freq, fs)
 
     # Return True if the frequency is a harmonic of the fundamental
-    for k in range(1, order + 1):
+    for k in range(2, order + 1):
         harmonic = alias_freq(k * fund, fs)
         if abs(harmonic - target) <= tol_hz:
             return True

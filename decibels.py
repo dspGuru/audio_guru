@@ -1,39 +1,39 @@
-"""Decibel utilities
-"""
+"""Decibel utilities"""
 
 import math
 
-MIN_DB = -120.0
-"""The minimum dB value which makes sense for audio"""
+from constants import MIN_DB, MIN_PWR
 
-MIN_PWR = 1e-12
-"""Power ratio corresponding to MIN_DB"""
+__all__ = [
+    "db",
+    "dbv",
+    "db_str",
+    "db_to_pwr_ratio",
+]
 
-UNKNOWN_DB = MIN_DB - 1.0
-"""Tag value for unknown dB"""
 
-def db(pwr: float, ndigits:int =1):
+def db(pwr: float, ndigits: int = 1):
     """
     Return dB of input power ratio, rounded to the specified number of digits.
     dB = 10*log10(pwr)
     """
     pwr = max(pwr, MIN_PWR)
-    return round(10.0*math.log10(pwr), ndigits)
+    return round(10.0 * math.log10(pwr), ndigits)
 
 
-def dbv(v: float, ndigits:int =1):
+def dbv(v: float, ndigits: int = 1):
     """
     Return dB of amplitude, eg, Volts, rounded to the specified number of digits.
     dBv = 20*log10(v)
     """
-    return db(v*v, ndigits)
+    return db(v * v, ndigits)
 
 
-def db_str(pwr: float, suffix: str='', ndigits:int =1):
+def db_str(pwr: float, suffix: str = "", ndigits: int = 1):
     """
-    Return dB of input power ratio.
-    
-    If power is below MIN_PWR, return '-----'.
+    Return string for dB of input power ratio.
+
+    If power is below MIN_PWR, return '------'.
 
     Parameters
     ----------
@@ -46,14 +46,14 @@ def db_str(pwr: float, suffix: str='', ndigits:int =1):
     """
     if pwr >= MIN_PWR:
         d = db(pwr, ndigits)
-        return f'{d:6.1f}{suffix}'
+        return f"{d:6.1f}{suffix}"
     else:
-        return '  -----'
+        return " -----"
 
 
-def db_to_pwr(db_val: float) -> float:
+def db_to_pwr_ratio(db_val: float) -> float:
     """Return power ratio of input dB.
 
     Values below MIN_DB are clamped to prevent underflow / -inf behavior.
     """
-    return 10.0**(max(db_val, MIN_DB)/10.0)
+    return 10.0 ** (max(db_val, MIN_DB) / 10.0)

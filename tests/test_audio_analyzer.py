@@ -46,7 +46,7 @@ class TestAudioAnalyzer:
 
         analysis = analyzer.results[key]
         assert analysis.segment is not None
-        assert analysis.result is not None
+        assert analysis.analysis is not None
         assert analysis.components is not None
 
     def test_read_multiple_files(self, examples_dir):
@@ -67,7 +67,7 @@ class TestAudioAnalyzer:
         analyzer = AudioAnalyzer()
         analyzer.read(str(fname))
 
-        analyzer.print(sort_stat_attr="thd", components=True, noise_floor=True)
+        analyzer.print(tone_sort_attr="thd", components=True, noise_floor=True)
 
         captured = capsys.readouterr()
         # We expect some output
@@ -78,4 +78,4 @@ class TestAudioAnalyzer:
 
         # If the file is 1k tone, it should produce ToneStats
         # Since we know test_tone_1k.wav is a tone, we expect the summary
-        assert "Tone Statistics Summary:" in captured.out
+        assert "Tone Statistics:" in captured.out

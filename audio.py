@@ -1,7 +1,6 @@
 """Audio Data Class"""
 
 from copy import copy
-import math
 from pathlib import Path
 
 import numpy as np
@@ -9,9 +8,12 @@ import scipy.linalg as la
 from scipy import signal
 import soundfile as sf
 
-from component import Component
-from constants import DEFAULT_AMP, DEFAULT_FS
-from decibels import dbv, MIN_PWR
+from constants import (
+    DEFAULT_BLOCKSIZE_SECS,
+    DEFAULT_FS,
+    DEFAULT_MAX_NF_DBFS,
+)
+from decibels import dbv
 from freq_bins import FreqBins
 from metadata import Metadata
 from segment import Segment, Segments
@@ -50,16 +52,40 @@ class Audio:
         ----------
         fs : float
             Sampling frequency in Hz.
+        md : Metadata
+            Audio metadata.
         name : str
             Name of the audio.
+        segment : Segment
+            Selected audio segment.
+        segment_index : int
+            Index of the selected segment.
+        segments : Segments
+            Segments of audio.
+        stack : list[Segment]
+            Stack of audio segments.
         """
+        self.fs = fs
         self.samples: np.ndarray = np.ndarray(shape=1, dtype=self.DTYPE)
         self.name: str = name
-        self.stack: list[Segment] = []
-        self.segment: Segment = Segment(fs)
+        self.segment: Segment = Segment(self.fs)
         self.segments: Segments = Segments()
-        self.segment_index: int = 0
-        self.md: Metadata = Metadata(self.name, self.segment)
+        self.md = Metadata(self.name, self.segment)
+        self.eof = False
+
+    @property
+    def fs(self) -> float:
+        """Sampling frequency in Hz."""
+        return self._fs
+
+    @fs.setter
+    def fs(self, value: float) -> None:
+        if value <= 0:
+            raise ValueError("Sampling frequency must be positive")
+        self._fs = value
+        self.blocksize = round(value * DEFAULT_BLOCKSIZE_SECS)
+        if hasattr(self, "segment"):
+            self.segment.fs = value
 
     def __iadd__(self, other: "Audio") -> "Audio":
         """In-place addition operator to add audio data.
@@ -118,10 +144,8 @@ class Audio:
         else:
             new_samples = np.asarray(other, dtype=self.DTYPE)
 
-        # If current samples is empty, just set to new_samples
-        if self.samples is None or self.samples.size == 0:
-            self.samples = new_samples
-        else:
+        # Concatenate the new samples to self.samples
+        if len(self):
             # Ensure compatible shapes (time axis is axis 0)
             if self.samples.ndim != new_samples.ndim:
                 raise ValueError("Cannot append arrays with differing dimensions")
@@ -130,39 +154,37 @@ class Audio:
                 and self.samples.shape[1:] != new_samples.shape[1:]
             ):
                 raise ValueError("Cannot append arrays with differing channel shapes")
+
+            # Concatenate the new samples to self.samples
             self.samples = np.concatenate((self.samples, new_samples), axis=0)
+        else:
+            # Set self.samples to the new samples
+            self.samples = new_samples
 
         # Update segment and metadata to span the whole buffer
-        self.segment = Segment(self.fs, 0, len(self.samples) - 1)
+        self.segment = Segment(self.fs, 0, len(self.samples))
         self.md.segment = copy(self.segment)
 
         return self
 
     def __len__(self):
         """Return the length of the entire audio data."""
-        return len(self.samples)
+        return len(self.samples) if len(self.samples) > 1 else 0
 
     def __iter__(self):
         """Return an iterator over the audio segments."""
         self.segments = self.get_segments(categorize=True)
-        self.segment_index = 0
         return self
 
     def __next__(self):
         """Select and return the next audio segment in the iteration."""
-        if self.segment_index >= len(self.segments):
+        if len(self.segments) == 0:
             raise StopIteration
 
-        segment = self.segments[self.segment_index]
-        self.segment_index += 1
+        segment = self.segments.pop(0)
         self.select(segment)
 
         return segment
-
-    @property
-    def fs(self) -> float:
-        """Return the sampling frequency in Hz."""
-        return self.segment.fs
 
     @property
     def selected_samples(self) -> np.ndarray:
@@ -172,19 +194,17 @@ class Audio:
     @property
     def max(self) -> float:
         """Return the maximum value of the selected audio."""
-        return float(np.max(self.selected_samples)) if len(self) else 0.0
+        return float(np.max(self.selected_samples))
 
     @property
     def min(self) -> float:
         """Return the minimum value of the selected audio."""
-        return float(np.min(self.selected_samples)) if len(self) else 0.0
+        return float(np.min(self.selected_samples))
 
     @property
     def dc(self) -> float:
         """Return the DC offset of the selected audio."""
         a = self.selected_samples
-        if a.size == 0:
-            return 0.0
         dc = float(np.mean(a))
         return dc
 
@@ -192,25 +212,29 @@ class Audio:
     def rms(self) -> float:
         """Return the RMS value of the selected audio."""
         a = self.selected_samples
-        if a.size == 0:
-            return 0.0
         rms = float(la.norm(a) / np.sqrt(a.size))
         return rms
 
     @property
     def freq(self) -> float:
         """
-        Get the fundamental frequency of the selected audio.
+        Return the estimated fundamental frequency of the selected audio.
 
         Returns
         -------
         float
-            The fundamental frequency.
+            The estimated fundamental frequency.
         """
         bins = self.get_bins()
         tones = bins.get_tones(max_components=1)
         freq = tones[0].freq if tones else 0.0
         return freq
+
+    def num_channels(self) -> int:
+        """Return the number of channels in the audio data."""
+        if self.samples.ndim == 1:
+            return 1
+        return self.samples.shape[1]
 
     def select(self, segment: Segment | None = None) -> Segment:
         """
@@ -226,40 +250,29 @@ class Audio:
         Segment
             The previous segment, for possible later restoration.
         """
+        # Save the previous segment
         prev_segment = self.segment
 
-        # Select the entire audio if no segment is specified
+        # If no segment is specified, select the entire audio below
         if segment is None:
-            segment = Segment(self.fs, 0, len(self.samples) - 1)
+            segment = Segment(self.fs, 0, len(self.samples))
 
-        # Ensure segment is within bounds
+        # Raise ValueError if segment is incompatible with audio or invalid
+        if segment.fs != self.fs:
+            raise ValueError("Segment fs must match audio fs")
         if segment.start < 0:
-            segment = Segment(self.fs, 0, segment.stop)
-        if segment.stop >= len(self.samples):
-            segment = Segment(self.fs, segment.start, len(self.samples) - 1)
+            raise ValueError("Segment start must be non-negative")
+        if segment.stop > len(self.samples) + 1:
+            raise ValueError("Segment stop must not be greater than audio length + 1")
+        if segment.stop <= segment.start:
+            raise ValueError("Segment stop must be greater than start")
 
+        # Select the segment and update metadata
         self.segment = segment
         self.md.segment = copy(segment)
 
+        # Return the previous segment
         return prev_segment
-
-    def push(self, segment: Segment) -> None:
-        """
-        Push the current segment onto the stack and select the specified
-        segment.
-
-        Parameters
-        ----------
-        segment : Segment
-            Segment to select.
-        """
-        self.stack.append(self.segment)
-        self.select(segment)
-
-    def pop(self) -> None:
-        """Pop the last segment from the stack and select it."""
-        segment = self.stack.pop()
-        self.select(segment)
 
     def filter(self, fir_h: list[float] | np.ndarray) -> None:
         """
@@ -287,136 +300,9 @@ class Audio:
         # Update the audio data with the filtered samples, casting back to original type
         self.samples[self.segment.slice] = filtered.astype(self.DTYPE)
 
-    def generate_tone(
-        self,
-        freq: float = 1000.0,
-        amp: float = 0.6,
-        secs: float = 10.0,
-        thd: float = MIN_PWR,
-    ) -> None:
-        """
-        Generate tone (sine) audio with optional first-harmonic distortion.
-
-        Parameters
-        ----------
-        freq : float
-            Frequency of the tone in Hz.
-        amp : float
-            Peak amplitude) of the tone (0.0 to 1.0).
-        secs : float
-            Duration of the generated audio in seconds.
-        thd : float
-            Total harmonic distortion as a fraction (not percentage)of the
-            fundamental. If less than or equal to MIN_PWR, no distortion is
-            generated.
-        """
-
-        # Initialize name and segment
-        self.name = "Tone"
-        self.segment = Segment(self.fs, 0, round(secs * self.fs) - 1)
-
-        # Generate tone at the specified frequency
-        t = Component(freq, amp)
-        self.samples = t.generate(secs, self.fs)
-
-        # If specified, generate distortion tone at twice the nominal frequency
-        if thd > MIN_PWR:
-            t2 = Audio()
-            t2.generate_tone(freq=freq * 2.0, amp=thd, secs=secs)
-            self += t2
-            thd_str = f"{(thd * 100.0):0.3f}%"
-        else:
-            thd_str = ""
-
-        # Set metadata
-        desc = f"{freq:0.1f}" if freq < 1000.0 else f"{math.trunc(freq / 1000.0)}k"
-        self.md.set(mfr=self.name, model=thd_str, desc=desc)
-
-    def generate_noise(self, amp: float = 0.6, secs: float = 10.0) -> None:
-        """
-        Generate white noise audio.
-
-        Parameters
-        ----------
-        amp : float
-            Peak amplitude of the noise (0.0 to 1.0).
-        secs : float
-            Duration of the generated noise in seconds.
-        """
-
-        # Initialize name and segment
-        self.name = "Noise"
-        self.segment = Segment(self.fs, 0, round(secs * self.fs) - 1)
-
-        # Generate white noise
-        n_samples = round(secs * self.fs)
-        self.samples = np.random.uniform(low=-amp, high=amp, size=n_samples).astype(
-            self.DTYPE
-        )
-
-        # Set metadata
-        desc = f"White Noise {secs:0.1f}s"
-        self.md.set(mfr=self.name, model="", desc=desc)
-
-    def generate_silence(self, secs: float = 10.0) -> None:
-        """
-        Generate silence audio.
-
-        Parameters
-        ----------
-        secs : float
-            Duration of the generated silence in seconds.
-        """
-
-        # Initialize name and segment
-        self.name = "Silence"
-        self.segment = Segment(self.fs, 0, round(secs * self.fs) - 1)
-
-        # Generate silence
-        self.samples = np.zeros(round(secs * self.fs), dtype=self.DTYPE)
-
-        # Set metadata
-        desc = f"Silence {secs:0.1f}s"
-        self.md.set(mfr=self.name, model="", desc=desc)
-
-    def generate_sweep(
-        self,
-        f_start: float = 20.0,
-        f_stop: float = 20000.0,
-        amp: float = DEFAULT_AMP,
-        secs: float = 10.0,
-        method: str = "logarithmic",
-    ) -> None:
-        """
-        Generate a frequency sweep audio signal.
-
-        Parameters
-        ----------
-        f_start : float
-            Starting frequency of the sweep in Hz.
-        f_stop : float
-            Ending frequency of the sweep in Hz.
-        amp : float
-            Peak amplitude of the sweep (0.0 to 1.0).
-        secs : float
-            Duration of the generated sweep in seconds.
-        """
-        # Initialize name and segment
-        self.name = "SweepGen"
-        self.segment = Segment(self.fs, 0, round(secs * self.fs) - 1)
-
-        # Generate sweep signal
-        t = np.arange(secs * self.fs) / self.fs
-        self.samples = amp * signal.chirp(
-            t, f0=f_start, t1=secs, f1=f_stop, method=method
-        )
-
-        # Set metadata
-        desc = f"Sweep {f_start:0.1f}Hz to {f_stop:0.1f}Hz"
-        self.md.set(mfr=self.name, model="", desc=desc)
-
     def get_segments(
         self,
+        start_sample: int = 0,
         silence_thresh_ratio: float = 1e-3,
         min_silence_secs: float = 0.1,
         silence: bool = False,
@@ -429,9 +315,9 @@ class Audio:
 
         Parameters
         ----------
-        ratio : float
+        silence_thresh_ratio : float
             Ratio of peak amplitude to use as threshold for segment detection.
-        secs : float
+        min_silence_secs : float
             Minimum duration in seconds for a segment to be included.
         silence : bool
             If True, return segments where the signal is below the threshold.
@@ -441,7 +327,7 @@ class Audio:
         # Get number of samples for signal gap detection. Return an empty
         # list if the audio is empty or the gap size is zero or less.
         min_silence_secs_n = min_silence_secs * self.fs
-        a = np.asarray(self.samples)
+        a = np.asarray(self.samples[start_sample:])
         n = a.size // a.ndim
         if n == 0 or min_silence_secs_n <= 0:
             return Segments()
@@ -466,7 +352,7 @@ class Audio:
         if peak == 0.0:
             # Entire signal is zero -> single segment spanning whole array if
             # nsamples satisfied
-            silent_segments.append(Segment(self.fs, 0, n - 1, Category.Silence))
+            silent_segments.append(Segment(self.fs, 0, n, Category.Silence))
             return silent_segments
 
         # Calculate threshold
@@ -507,19 +393,24 @@ class Audio:
             for segment in silent_segments:
                 if segment.start - start >= min_silence_secs_n:
                     segments.append(
-                        Segment(self.fs, start, segment.start - 1, len(segments))
+                        Segment(self.fs, start, segment.start, len(segments))
                     )
                 start = segment.stop + 1
         else:
             # No silent segments found: return entire audio as a single segment
-            segments.append(Segment(self.fs, 0, n - 1))
+            segments.append(Segment(self.fs, 0, n))
 
         # Categorize the non-silent segments if specified
         if categorize:
             for segment in segments:
-                self.push(segment)
+                old_segment = self.select(segment)
                 segment.cat = self.get_category()
-                self.pop()
+                self.select(old_segment)
+
+        # Adjust start and stop to be relative to the start of the audio
+        for segment in segments:
+            segment.start += start_sample
+            segment.stop += start_sample
 
         return segments
 
@@ -527,6 +418,17 @@ class Audio:
         """Return the frequency bins of the selected audio."""
         bins = FreqBins(self.selected_samples, self.md, channel)
         return bins
+
+    def is_silence(self) -> bool:
+        """
+        Determine if the selected audio is silence.
+
+        Returns
+        -------
+        bool
+            True if the selected audio is silence.
+        """
+        return np.all(self.selected_samples == 0)
 
     def is_sweep(self, secs: float) -> bool:
         """
@@ -548,32 +450,29 @@ class Audio:
         freqs: list[float] = []
         for start in range(self.segment.start, self.segment.stop, nsamps):
             # Define subsegment
-            stop = start + nsamps - 1
+            stop = start + nsamps
             if stop >= len(self.samples):
-                stop = len(self.samples) - 1
+                stop = len(self.samples)
             subsegment = Segment(self.fs, start, stop)
 
             # Append the primary frequency of the subsegment
-            self.push(subsegment)
+            old_segment = self.select(subsegment)
             freqs.append(self.freq)
-            self.pop()
+            self.select(old_segment)
 
         # If enough frequencies have been collected, remove first and last
         # to avoid edge effects
         if len(freqs) >= 4:
             freqs = freqs[1:-1]
 
-        # If all subsegments have increasing or decreasing frequencies, it
+        # If all subsegments have increasing or decreasing frequencies it
         # likely is a sweep.
         if len(freqs) >= 2:
             diffs = np.diff(freqs)
-            if not len(diffs):
-                return False
-
             if np.all(diffs >= 0) or np.all(diffs <= 0):
                 return True
 
-        # Sweep not detected: return False
+        # Sweep not detected
         return False
 
     def get_category(self, secs: float = 0.1) -> Category:
@@ -586,7 +485,7 @@ class Audio:
             The audio category: Tone, Sweep, Noise, or Unknown.
         """
         # Check for silence
-        if np.all(self.selected_samples == 0):
+        if self.is_silence():
             return Category.Silence
 
         # Get frequency bins
@@ -606,7 +505,9 @@ class Audio:
 
         return Category.Unknown
 
-    def get_noise_floor(self, secs: float = 0.25) -> tuple[float, int]:
+    def get_noise_floor(
+        self, secs: float = 0.25, max_noise_db: float = DEFAULT_MAX_NF_DBFS
+    ) -> tuple[float, int]:
         """
         Get the audio's noise floor and the index at which it was found.
 
@@ -643,10 +544,16 @@ class Audio:
             avg = np.mean(segment)
             averages = np.append(averages, avg)
 
+        if averages.size == 0:
+            return (0.0, 0)
+
         # Calculate the noise floor as the minimum value of the averages
-        noise_floor = np.min(averages)
-        index = np.where(averages == noise_floor)[0][0] * avg_size
-        return (float(noise_floor), index)
+        noise_floor = float(np.min(averages))
+        if dbv(noise_floor) > max_noise_db:
+            return (0.0, 0)
+
+        index = int(np.where(averages == noise_floor)[0][0] * avg_size)
+        return (noise_floor, index)
 
     def read(self, fname: str | Path) -> bool:
         """
@@ -666,21 +573,65 @@ class Audio:
         fname = str(fname)
 
         try:
-            data, fs = sf.read(fname, dtype="float32")
+            with sf.SoundFile(fname) as f:
+
+                self.__init__(fs=f.samplerate, name=f.name)
+
+                while self.read_block(f):
+                    pass
+
+                if not len(self):
+                    return False
+
+                # Update segment to cover full length
+                self.select()
+
+                return True
+
         except Exception as e:
             print(f"Error reading audio file: {e}")
             return False
 
-        # Store audio data and metadata
-        self.samples = np.asarray(data, dtype=self.DTYPE)
-        self.segment = Segment(fs, 0, len(self) - 1)
-        self.name = fname
-        self.md = Metadata(self.name, self.segment)
+    def open(self, fname: str | Path) -> bool:
+        """
+        Open an audio file.
 
-        # Get segments
-        self.segments = self.get_segments(categorize=True)
+        Parameters
+        ----------
+        fname : str
+            File name to open.
 
-        return len(self) > 0
+        Returns
+        -------
+        bool
+            True if successful.
+        """
+        self.sf = sf.SoundFile(fname)
+
+    def read_block(self, f=None) -> bool:
+        """
+        Read a block of audio data from an open file.
+
+        Parameters
+        ----------
+        f : sf.SoundFile | None
+            Open sound file to read from. If None, use self.sf.
+
+        Returns
+        -------
+        bool
+            True if data was read, False if EOF.
+        """
+        if f is None:
+            f = self.sf
+
+        data = f.read(self.blocksize, dtype="float32", always_2d=False)
+        if len(data) == 0:
+            return False
+
+        self.append(data)
+
+        return True
 
     def write(self, fname: str | Path = "") -> bool:
         """
@@ -713,6 +664,9 @@ class Audio:
 
         # Write the file and update the file name
         data = np.asarray(self.selected_samples, dtype=self.DTYPE)
+        p = Path(fname)
+        if p.parent and not p.parent.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
         try:
             sf.write(fname, data, int(self.fs))
             self.md.pathname = fname

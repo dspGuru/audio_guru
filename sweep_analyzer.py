@@ -6,9 +6,8 @@ from scipy import signal
 from analyzer import Analyzer
 from audio import Audio
 from component import Component, Components
-from constants import DEFAULT_AMP, EQ_BANDS, MIN_AUDIO_LEN, MIN_PWR
+from constants import EQ_BANDS, MIN_AUDIO_LEN, MIN_PWR
 from freq_resp import FreqResp
-from generate import silence, sweep
 from segment import Segment
 from util import Category
 
@@ -98,6 +97,7 @@ class SweepAnalyzer(Analyzer):
 
         # Combine consecutive duplicate frequency entries (common for long frames)
         components.combine()
+        components.name = "Sweep Components"
         self.components = components
         return self.components
 
@@ -151,47 +151,11 @@ class SweepAnalyzer(Analyzer):
         # Print components if specified
         print_components: bool = kwargs.get("components", False)
         if print_components:
-            print(f"Sweep Components ({len(self.components)} found):")
             self.components.print()
             print()
 
         # Print the frequency response
         freq_resp = self.analyze()
-        print(f"\nSweep Frequency Response")
+        print("\nSweep Frequency Response")
         print(freq_resp.summary())
         print()
-
-
-def main():
-    """Main function for testing the SweepTest class."""
-
-    # Generate a sweep from 20 Hz to 20 kHz with one second of silence before
-    # and after the sweep
-    audio = silence(1.0)
-    audio.append(sweep(f_start=20.0, f_stop=20000.0, secs=10.0, amp=DEFAULT_AMP))
-    audio.append(silence(secs=1.0, fs=audio.fs))
-    audio.write("test_sweep.wav")
-    print("Wrote sweep audio to 'test_sweep.wav'")
-
-    # Create analyzer instance
-    analyzer = SweepAnalyzer(audio)
-
-    # Get the sweep segments from the audio and verify that exactly one is found
-    segments = audio.get_segments()
-    assert len(segments) == 1
-
-    # Analyze the sweep segment
-    audio.select(segments[0])
-    components = analyzer.get_components()
-    components.print()
-
-    # Analyze and print the sweep frequency response
-    freq_resp = analyzer.analyze()
-    print(freq_resp.summary())
-
-    # Print the sweep components
-    analyzer.print()
-
-
-if __name__ == "__main__":
-    main()

@@ -1,8 +1,11 @@
+import numpy as np
 import pytest
 import pandas as pd
+
 from analyzer import Analyzer
 from audio import Audio
 from component import Components
+import generate
 
 
 # Concrete implementation for testing
@@ -26,7 +29,9 @@ class ConcreteAnalyzer(Analyzer):
         # self.components = self.get_components()
         # return self.time_stats
         # So we can just call super().analyze(segment) if we provide get_components.
-        return super().analyze(segment)
+        # So we can just call super().analyze(segment) if we provide get_components.
+        self.analysis = super().analyze(segment)
+        return self.analysis
 
     def get_components(self):
         # Return empty components or mock
@@ -122,3 +127,35 @@ def test_mock_instantiation_and_fs_property():
     fa = FakeAudio(length=96000, fs=48000)
     ta = ConcreteAnalyzer(fa)
     assert ta.fs == 48000
+
+
+def test_analyzer_short_audio_error():
+    # Test select() raising ValueError if segment too short
+    # MIN_AUDIO_LEN is usually 20 samples or so for some analyzers, or 2048 etc.
+    # constants: MIN_AUDIO_LEN = 2048 (from analyzer.py view)
+
+    a = Audio(fs=48000)
+    # create short audio
+    a.samples = np.zeros(100, dtype=np.float32)
+
+    an = ConcreteAnalyzer(a)
+
+    # Analyzer.select uses audio.select but checks length of segment first.
+    # We must pass a segment or let it create default segment from full audio.
+    # If full audio is short, default segment is short.
+
+    with pytest.raises(ValueError, match="too short to analyze"):
+        an.select()
+
+
+def test_analyzer_to_csv_creates_dirs(tmp_path):
+    a = generate.sine(secs=1.0)
+    an = ConcreteAnalyzer(a)
+
+    subdir = tmp_path / "subdir"
+    outfile = subdir / "out.csv"
+
+    assert not subdir.exists()
+    an.to_csv(str(outfile))
+    assert subdir.exists()
+    assert outfile.exists()

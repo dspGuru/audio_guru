@@ -1,5 +1,6 @@
 import pytest
 from freq_resp import FreqResp
+from types import SimpleNamespace
 
 
 class DummyComp:
@@ -31,34 +32,40 @@ def test_freq_resp_import():
 def test_noise_floor_computation():
     comps = DummyComponents([-55.0, -80.5, -60.0])
     fr = FreqResp(comps)
-    assert fr.noise_floor == pytest.approx(-80.5)
+    assert fr.minimum == pytest.approx(-80.5)
 
 
 def test_to_dict_and_summary_contents():
     comps = DummyComponents(
         pwrs=[-45.2, -47.8, -50.0],
-        md={"test": True},
+        md=SimpleNamespace(
+            test=True,
+            unit_id="Unit123",
+            desc="Test FreqResp",
+            segment=SimpleNamespace(
+                cat=SimpleNamespace(name="TEST"), desc="Segment Desc"
+            ),
+        ),
         ripple_value=1.234,
         edges=(280.0, 3200.0),
     )
     fr = FreqResp(comps)
     d = fr.to_dict()
 
-    assert d["noise_floor"] == pytest.approx(min([-45.2, -47.8, -50.0]))
+    assert d["minimum"] == pytest.approx(min([-45.2, -47.8, -50.0]))
     assert d["ripple"] == pytest.approx(1.234)
     assert d["lower_edge"] == pytest.approx(280.0)
     assert d["upper_edge"] == pytest.approx(3200.0)
 
     summary = fr.summary()
     # Check formatted values appear in the summary string
-    assert "Noise Floor=" in summary
-    assert "Ripple=" in summary
-    assert "Lower Edge=" in summary
-    assert "Upper Edge=" in summary
-    assert "Noise Floor=-50.0 dB" in summary  # min value formatted with one decimal
-    assert "Ripple=1.2 dB" in summary  # ripple formatted to one decimal
-    assert "Lower Edge=280.0 Hz" in summary
-    assert "Upper Edge=3200.0 Hz" in summary
+    assert "Unit123" in summary
+    assert "Test FreqResp" in summary
+    assert "TEST" in summary
+    assert "280" in summary
+    assert "3200" in summary
+    assert "1.2" in summary
+    assert "-50.0" in summary
 
 
 def test_empty_components_raises_value_error():

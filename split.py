@@ -17,22 +17,40 @@ def get_args():
     parser.add_argument(
         "pattern", metavar="PATTERN", help="file name pattern", nargs="?", default=""
     )
-    parser.add_argument(
-        "-nf", "--noise-floor", action="store_true", help="noise floor", default=True
-    )
-    parser.add_argument(
-        "-s", "--stats", action="store_true", default=False, help="statistics"
-    )
-    parser.add_argument(
-        "-w", "--write", action="store_true", default=False, help="write output files"
-    )
+
     return parser.parse_args()
 
 
-def main() -> None:
-    """Main function to run the noise analyzer."""
+def split_file(pathname: str) -> list[str]:
+    """Split a single audio file into segments."""
+    audio = Audio()
+    if not audio.read(pathname):
+        raise FileNotFoundError(f"Error: Could not read audio file '{pathname}'")
 
+    out_fnames: list[str] = []
+    base_fname = pathname.rsplit(".", 1)[0]
+    if base_fname == pathname:
+        # No extension found, append suffix to original name
+        base_fname = pathname
+
+    for i, segment in enumerate(audio):
+        print(segment.desc)
+        out_fname = f"{base_fname}_{i+1}.wav"
+        if base_fname == pathname:
+            # Ensure distinct name if original had no extension
+            out_fname = f"{pathname}_{i+1}.wav"
+
+        audio.write(out_fname)
+        print(f"Wrote segment {i+1} to '{out_fname}'")
+        out_fnames.append(out_fname)
+
+    return out_fnames
+
+
+def main() -> None:
+    """Main function to run the split an audio file into segments."""
     args = get_args()
+
     # Get file pattern from command-line arguments
     pattern = args.pattern
     fnames = glob.glob(pattern)
@@ -48,17 +66,7 @@ def main() -> None:
             print(f"Error: Could not read audio file '{fname}'")
             continue
 
-        base_fname = fname.rsplit(".", 1)[0]
-
-        # Print audio file information
-        print(f"Audio File: {fname}, Duration: {audio.segment.secs:0.1f} seconds")
-        for i, segment in enumerate(audio):
-            print(segment.desc)
-
-            if args.write:
-                out_fname = f"{base_fname}_{i+1}.wav"
-                audio.write(out_fname)
-                print(f"Wrote segment {i+1} to '{out_fname}'")
+        split_file(fname)
         print()
 
 

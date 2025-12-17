@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy import signal
 
 from analysis import Analysis
 from constants import MIN_DB, MIN_PWR
@@ -56,55 +55,13 @@ class Component(Analysis):
         return s
 
     # @override
+    @staticmethod
+    def summary_header() -> str:
+        return f"{'Category':10} {'Frequency (Hz)':15} {'Power':10} {'Time (s)':10}"
+
+    # @override
     def summary(self) -> str:
         return str(self)
-
-    def generate(self, secs: float, fs: float) -> np.ndarray:
-        """
-        Generate a mono audio waveform for the tone.
-
-        Parameters
-        ----------
-        secs : float
-            Duration of the generated audio in seconds. The number of samples
-            produced is int(secs * fs). If secs * fs <= 0 an empty array is
-            returned.
-        fs : float
-            Sampling rate in Hz (samples per second). Values <= 0 will result in
-            an empty output.
-
-        Returns
-        -------
-        numpy.ndarray
-            1-D array of length int(secs * fs) containing the time-domain samples.
-            The waveform is generated as a constant-frequency sinusoid (implemented
-            via scipy.signal.chirp with f0 == f1) and scaled by the `pwr` attribute.
-
-        Notes
-        -----
-        - The implementation depends on numpy (np) and scipy.signal (signal).
-        - Because the generator uses a constant-frequency chirp (f0 == f1),
-          the output is a pure tone at `freq` Hz.
-        - This method does not perform windowing, DC offset removal, or clipping;
-          those should be handled by callers if needed.
-
-        Examples
-        --------
-        >>> tone = Component(freq=440.0, pwr=0.5, cat=Category.Tone)
-        >>> audio = tone.generate(secs=2.0, fs=44100)
-        This generates a two-second A4 tone at half amplitude sampled at 44.1
-        kHz.
-        """
-
-        # Generate constant-frequency tones using signal.chirp (f0 == f1 => pure tone)
-        num_samples = int(secs * fs)
-        if num_samples <= 0:
-            return np.array([])
-
-        t = np.arange(num_samples) / fs
-        amp = self.pwr
-        audio = amp * signal.chirp(t, f0=self.freq, t1=t[-1], f1=self.freq)
-        return audio
 
     # @override
     def to_dict(self) -> dict[str, float | str]:
@@ -158,8 +115,13 @@ class Components(list[Component]):
 
     Attributes
     ----------
-    segment : Segment
-        Owning Segment for the components.
+    md : Metadata
+        Metadata associated with the components list.
+    name : str
+        Optional name for the components list. Default is "Components".
+    ref_pwr : float
+        Reference power used for dB conversion. Default is 1.0.
+
     """
 
     def __init__(self, md: Metadata, name: str = "Components") -> None:
@@ -168,6 +130,11 @@ class Components(list[Component]):
         assert isinstance(md, Metadata)
         self.md = copy(md)
         self.name = name
+        self.ref_pwr = 1.0
+
+    def cat(self) -> Category:
+        """Return the category of the segment."""
+        return self.md.segment.cat
 
     def combine(self, freq_tol: float = 1.0) -> None:
         """
@@ -196,10 +163,6 @@ class Components(list[Component]):
         group = Components(self.md)
         group.append(self[0])
         for component in self[1:]:
-            if not group:
-                group.append(component)
-                continue
-
             prev = group[-1]
             if (
                 component.freq > prev.freq
@@ -217,6 +180,7 @@ class Components(list[Component]):
 
                 # Start a new group
                 group = Components(self.md)
+
             # Add to current group
             group.append(component)
 
@@ -383,8 +347,10 @@ class Components(list[Component]):
         lower_idx = self.find_index(lower)
         upper_idx = self.find_index(upper)
 
-        if lower_idx is None or upper_idx is None:
-            return (lower, upper)
+        if lower_idx is None:
+            lower_idx = 0
+        if upper_idx is None:
+            upper_idx = len(self) - 1
 
         # Calculate average power and target power at the specified attenuation
         pwr_sum = sum(self[i].pwr for i in range(lower_idx, upper_idx + 1))
@@ -457,7 +423,9 @@ class Components(list[Component]):
         ax.grid(True)
         plt.show()
 
-    def print(self, ref_pwr: float = 1.0, max_components: int | None = 10) -> None:
+    def print(
+        self, ref_pwr: float | None = None, max_components: int | None = 10
+    ) -> None:
         """
         Print tones in dB relative to a reference power.
 
@@ -467,11 +435,16 @@ class Components(list[Component]):
             Reference power used for dB conversion. Values <= 0 are clipped
             to a small positive minimum to avoid log errors in db().
         """
+        # Use self.ref_pwr if ref_pwr is None
+        if ref_pwr is None:
+            ref_pwr = self.ref_pwr
+
         # Avoid passing non-positive reference to db()
         if ref_pwr <= 0.0:
             ref_pwr = MIN_PWR
 
-        print(f"{self.name} ({self.md.segment})")
+        print(self.md.segment.desc)
+        print(f"{self.name} ({len(self)} found)")
         print("----------------------------------------")
 
         # Print all components if max_components is None or large enough to

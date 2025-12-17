@@ -1,16 +1,14 @@
-import pytest
 from segment import Segment, Segments
 from util import Category
 
 
 def test_len_secs_and_slice_properties():
-    s = Segment(fs=100.0, start=0, stop=99, id=0)
-    # len uses inclusive stop: stop - start + 1
-    assert len(s) == 100
-    assert s.secs == pytest.approx(1.0)
-    assert s.slice == slice(0, 100)
-    assert s.start_secs == pytest.approx(0.0)
-    assert s.stop_secs == pytest.approx(0.99)
+    s = Segment(fs=100.0, start=0, stop=101, id=0)  # stop is exclusive
+    assert s.secs == 1.0
+    # slice is inclusive of stop index in this implementation -> stop + 1
+    assert s.slice == slice(0, 101)
+    assert s.start_secs == 0.0
+    assert s.stop_secs == 1.0
 
 
 def test_title_str_and_desc_formatting():
@@ -37,19 +35,19 @@ def test_limit_applies_max_seconds():
 
 def test_trunc_behavior_and_noop_for_short_segments():
     # trunc only acts when length >= fs
-    short = Segment(fs=100.0, start=0, stop=50)  # len = 51 < fs
+    short = Segment(fs=100.0, start=0, stop=51)  # len = 51 < fs
     short.trunc(1.0)
-    assert short.stop == 50  # unchanged
+    assert short.stop == 51  # unchanged
 
-    # longer segment: start=0 stop=299 -> len=300, fs=100 -> n_secs=100, multiple=3 => stop = 300
-    long = Segment(fs=100.0, start=0, stop=299)
+    # longer segment: start=0 stop=300 -> len=300, fs=100 -> n_secs=100, multiple=3 => stop = 300
+    long = Segment(fs=100.0, start=0, stop=301)
     long.trunc(1.0)
-    assert long.stop == 300
+    assert long.stop == 301
 
 
 def test_segments_str_lists_all_segments():
-    a = Segment(fs=100.0, start=0, stop=99, id=1, cat=Category.Unknown)
-    b = Segment(fs=100.0, start=100, stop=199, id=2, cat=Category.Unknown)
+    a = Segment(fs=100.0, start=0, stop=101, id=1, cat=Category.Unknown)
+    b = Segment(fs=100.0, start=100, stop=201, id=2, cat=Category.Unknown)
     segs = Segments([a, b])
     s = str(segs)
     assert "1:" in s

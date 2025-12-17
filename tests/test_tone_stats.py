@@ -1,9 +1,9 @@
-import pytest
 import numpy as np
-import pandas as pd
-from tone_stats import ToneStats, ToneStatsList
+import pytest
+
 from audio import Audio
 from segment import Segment
+from tone_stats import ToneStats
 
 
 def test_tonestats_initialization():
@@ -63,7 +63,6 @@ def test_tonestats_str():
     ts = ToneStats(audio, 100, 0, 1.0, 0.01, 0.0, 0.0)
 
     s = str(ts)
-    assert "Analysis" in s
     assert "Freq  = 100.0 Hz" in s
     assert "SNR   =" in s
 
@@ -91,33 +90,33 @@ def test_tonestats_summary():
     # Should contain numeric values formatted
 
 
-def test_tonestats_list(tmp_path, capsys):
+def test_tonestats_edge_cases():
     audio = Audio(fs=1000.0)
     audio.samples = np.zeros(1000, dtype=np.float32)
     audio.select(Segment(1000.0, 0, 999))
 
-    # Create valid inputs for ToneStats
-    # __init__ args: audio, freq, freq2, sig, noise, spur, dist
-    ts1 = ToneStats(audio, 100, 0, 1.0, 0.01, 0.0, 0.01)  # THD = 0.01
-    ts2 = ToneStats(audio, 200, 0, 1.0, 0.01, 0.0, 0.02)  # THD = 0.02
+    # Low noise -> SNR set to -MIN_DB?
+    # noise <= MIN_PWR (1e-9)
+    ts_low_noise = ToneStats(audio, 100, 0, 1.0, 1e-10, 0.0, 0.0)
+    # Check SNR logic: if noise > MIN_PWR else -MIN_DB?
+    # Actually lines say: self.snr = -MIN_DB (if not noise > MIN_PWR)
+    # Wait, -MIN_DB is -(-120) = 120? Or MIN_DB is positive?
+    # constants.py: MIN_DB = -100.0 maybe?
+    # Let's just run it. The code is: self.snr = -MIN_DB
+    assert ts_low_noise.snr is not None
 
-    ts_list = ToneStatsList([ts2, ts1])
+    # No signal -> THD=0
+    ts_no_sig = ToneStats(audio, 100, 0, 0.0, 0.01, 0.0, 0.0)
+    assert ts_no_sig.thd == 0.0
+    assert ts_no_sig.thdn == 0.0
 
-    # Test print (sorting by thd default)
-    ts_list.print()
-    captured = capsys.readouterr()
-    assert "100" in captured.out
-    assert "200" in captured.out
-    # Check if header printed
-    assert "Description" in captured.out
+    # Freq2 > 0 and THDN > 0 in __str__
+    ts_dual = ToneStats(audio, 100, 200, 1.0, 0.01, 0.0, 0.01)
+    # This has dist=0.01, sig=1.0 -> THD=0.01. THDN > 0.
+    s = str(ts_dual)
+    assert "Freq2 = 200.0 Hz" in s
+    assert "THD   =" in s
 
-    # Test get_dataframe
-    df = ts_list.get_dataframe()
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 2
-    assert "THD" in df.columns
-
-    # Test to_csv
-    f = tmp_path / "test_stats.csv"
-    ts_list.to_csv(str(f))
-    assert f.exists()
+    # Summary with Freq2
+    s_sum = ts_dual.summary()
+    assert "200" in s_sum

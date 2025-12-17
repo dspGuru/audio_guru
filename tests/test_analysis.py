@@ -2,6 +2,18 @@ import pytest
 from analysis import Analysis
 
 
+# Concrete implementation should be instantiable and copy metadata (shallow)
+class DummyAnalysis(Analysis):
+    def to_dict(self) -> dict:
+        return {"md": self.md}
+
+    def summary_header() -> str:
+        return "Header"
+
+    def summary(self) -> str:
+        return "OK"
+
+
 def test_analysis_import():
     # Verify Analysis is importable and is a class
     assert isinstance(Analysis, type)
@@ -34,14 +46,6 @@ def test_partial_subclass_missing_summary_is_abstract():
 
 
 def test_concrete_subclass_implements_and_copies_metadata():
-    # Concrete implementation should be instantiable and copy metadata (shallow)
-    class DummyAnalysis(Analysis):
-        def to_dict(self) -> dict:
-            return {"md": self.md}
-
-        def summary(self) -> str:
-            return "ok"
-
     md = {"a": 1}
     ana = DummyAnalysis(md)
     # original metadata mutation of top-level key should not affect stored copy
@@ -52,14 +56,6 @@ def test_concrete_subclass_implements_and_copies_metadata():
 
 
 def test_metadata_shallow_copy_behavior():
-    # The copy used in Analysis.__init__ is a shallow copy
-    class DummyAnalysis(Analysis):
-        def to_dict(self) -> dict:
-            return {"md": self.md}
-
-        def summary(self) -> str:
-            return "ok"
-
     md = {"nested": {"x": 1}}
     ana = DummyAnalysis(md)
     # Mutating nested content should be visible through the shallow copy

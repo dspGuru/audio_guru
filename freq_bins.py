@@ -175,13 +175,14 @@ class FreqBins:
         tuple[float, float]
             The lower and upper band edges in Hz.
         """
-        max_val = np.max(self.bins)
+        a = np.abs(self.bins)
+        max_val = np.max(a)
         threshold = max_val * 10 ** (-tol_db / 20)
 
         # Find indices where bins are above the threshold
-        above_threshold = np.where(self.bins >= threshold)[0]
+        above_threshold = np.where(a >= threshold)[0]
 
-        if len(above_threshold) == 0:
+        if max_val == 0.0 or len(above_threshold) == 0:
             return (0.0, 0.0)
 
         # Get the lower and upper band edges
@@ -371,6 +372,8 @@ class FreqBins:
 
     def freq_to_bin(self, freq: float) -> int:
         """Return the bin number of the frequency."""
+        if freq < 0.0:
+            raise ValueError("Frequency must be non-negative")
         return round(freq / (self.fs * 0.5) * len(self.bins))
 
     def freq_in_list(

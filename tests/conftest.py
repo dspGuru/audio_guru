@@ -1,5 +1,5 @@
-import sys
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -15,12 +15,12 @@ def project_root():
 
 
 @pytest.fixture(scope="session")
-def examples_dir(project_root):
+def examples_dir(project_root) -> Path:
     return project_root / "examples"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_examples(examples_dir):
+def ensure_examples(examples_dir) -> Path:
     """Ensure example files exist before running tests."""
     if not examples_dir.exists() or not list(examples_dir.glob("*.wav")):
         print("Generating example files...")

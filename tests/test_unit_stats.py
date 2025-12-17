@@ -57,11 +57,60 @@ class TestUnitStats:
         assert comp_1k.pwr == pytest.approx((1.0 + 0.5) / 2)  # Magnitude averaged?
         # Wait, the code averages magnitude: comp.magnitude = (comp.magnitude + other_comp.magnitude) / 2
         # Component doesn't have .magnitude, it has .pwr!
-        # Let's check the code implementation again.
-        # The `aggregate` method in `unit_stats.py` uses `.magnitude` and `.phase` which might be incorrect if Component uses `pwr`.
-        # I need to fix `unit_stats.py` if that's the case.
-        # `view_file` of `component.py` shows it has `pwr` but NOT `magnitude`.
         # This is a BUG in `unit_stats.py`. I will fix it in EXECUTION.
+        # Actually pwr is used in source code for unit_stats.py line 47.
+        # my_comp.pwr = (my_comp.pwr + other_comp.pwr) / 2
+        # So it is correct.
+
+    def test_aggregate_overlapping_results(self):
+        # Hit line 26: if test_name in self.results:
+        stats1 = UnitStats("U1")
+        stats1.results["T1"] = 1.0
+
+        stats2 = UnitStats("U2")
+        stats2.results["T1"] = 2.0
+
+        stats1.aggregate(stats2)
+
+        # Should sum them? The code says:
+        # self.results[test_name] += result
+        assert stats1.results["T1"] == 3.0
+
+    def test_print_specs_coverage(self, capsys):
+        stats = UnitStats("U1")
+
+        # Add freq response checks to hit line 64: if len(self.freq_response) > 0
+        c1 = Component(100.0, 1.0, 0.0, Category.Tone)
+        stats.freq_response.append(c1)
+
+        # Add overlap in band for ripple calc (line 70)
+        # band edges: 20 to 20000. 100 Hz is in band.
+        # Need multiple? Ripple = max - min.
+        c2 = Component(1000.0, 0.5, 0.0, Category.Tone)
+        stats.freq_response.append(c2)
+
+        stats.print_specs()
+
+        captured = capsys.readouterr()
+        assert "Frequency Response" in captured.out
+        assert "+/-" in captured.out
+
+    def test_manager_add_result(self):
+        from unit_stats import UnitStatsManager
+
+        mgr = UnitStatsManager()
+
+        # Hit line 92: if unit_id not in self.units
+        mgr.add_result("U1", "Test1", 10.0)
+
+        assert "U1" in mgr.units
+        stats = mgr.units["U1"]
+        assert stats.num_tests == 1
+        assert stats.results["Test1"] == 10.0
+
+        # Add another result to existing unit (implicit else path, but covers logic flow)
+        mgr.add_result("U1", "Test2", 20.0)
+        assert stats.num_tests == 2
 
     def test_print_specs_output(self, capsys):
         stats = UnitStats("TestUnit")
@@ -78,3 +127,41 @@ class TestUnitStats:
         assert "Noise Floor ............... -90.0 dBFS" in output
         assert "Total Harmonic Distortion ... 0.0500 %" in output
         assert "Signal-to-Noise Ratio ....... 96.0 dB" in output
+
+    def test_aggregate_noise_floor_zero(self):
+        # Test case where one unit has 0 noise floor (uninitialized or perfectly silent?)
+        stats1 = UnitStats("U1")
+        stats1.noise_floor = 0.0
+
+        stats2 = UnitStats("U2")
+        stats2.noise_floor = 0.001
+
+        stats1.aggregate(stats2)
+        assert stats1.noise_floor == 0.001
+
+    def test_aggregate_missing_snr(self):
+        # Hit line 35-38 (try...except AttributeError)
+        stats1 = UnitStats("U1")
+        stats1.snr = 10.0
+
+        stats2 = UnitStats("U2")
+        # Delete snr from stats2 to trigger AttributeError
+        del stats2.snr
+
+        # Should not raise exception
+        stats1.aggregate(stats2)
+        assert stats1.snr == 10.0
+
+    def test_print_specs_empty_band_components(self, capsys):
+        # Hit line 74: else: dev = 0.0
+        # Create a unit with components outside the ripple band (20Hz - 20kHz)
+        stats = UnitStats("U1")
+        c1 = Component(10.0, 1.0, 0.0, Category.Tone)  # Below 20
+        c2 = Component(30000.0, 1.0, 0.0, Category.Tone)  # Above 20k
+        stats.freq_response.append(c1)
+        stats.freq_response.append(c2)
+
+        stats.print_specs()
+        captured = capsys.readouterr()
+        # Should show dev 0.0
+        assert "+/- 0.0 dB" in captured.out

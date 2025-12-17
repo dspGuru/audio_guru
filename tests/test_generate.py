@@ -26,6 +26,9 @@ def test_noise():
     fs = DEFAULT_FS
     secs = 10.0
     amp = 0.5
+
+    # Seed noise for repeatable tests
+    np.random.seed(0)
     a = noise(amp=amp, secs=secs, fs=fs)
 
     assert isinstance(a, Audio)

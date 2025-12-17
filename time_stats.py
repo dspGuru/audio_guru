@@ -1,13 +1,10 @@
-"""Audio Time-Domain Statistics."""
+"""Audio time-domain statistics module."""
 
-from copy import copy
-from operator import attrgetter
-
+from analysis import Analysis
 from audio import Audio
 from decibels import dbv
-from analysis import Analysis
 
-__all__ = ["TimeStats", "TimeStatsList"]
+__all__ = ["TimeStats"]
 
 
 class TimeStats(Analysis):
@@ -21,18 +18,12 @@ class TimeStats(Analysis):
             Minimum sample value.
         max : float
             Maximum sample value.
-        dbfs : float
-            Signal dB below full scale.
         rms : float
             Signal RMS value.
-        start : float
-            Start time of segment in seconds.
-        secs : float
-            Duration of segment in seconds.
-        crest : float
-            Crest factor.
         noise_floor : float
             Estimated noise floor.
+        noise_floor_idx : int
+            Index of the noise floor in samples.
     """
 
     def __init__(self, audio: Audio) -> None:
@@ -45,25 +36,25 @@ class TimeStats(Analysis):
             Audio data to analyze.
         """
         super().__init__(audio.md)
+
         self.dc = audio.dc
         self.min = audio.min
         self.max = audio.max
-        self.dbfs = dbv(self.max)
         self.rms = audio.rms
-        self.start = self.md.segment.start_secs
-        self.secs = self.md.segment.secs
-        self.crest = self.max / self.rms if self.rms > 0.0 else 0.0
-        self.noise_floor, _ = audio.get_noise_floor()
+        self.noise_floor, self.noise_floor_idx = audio.get_noise_floor()
+
+    @property
+    def noise_floor_secs(self) -> float:
+        """Return the time in seconds of the noise floor index."""
+        return float(self.noise_floor_idx) / self.md.fs
 
     def __str__(self) -> str:
         """Return a multi-line string representation of the stats."""
         lines: list[str] = []
 
         lines.append(f"Time Stats ({self.md.segment})")
-        lines.append("-------------------------------")
+        lines.append("---------------------------------------")
         lines.append(f"Fs    = {self.md.fs} Hz")
-        lines.append(f"Start = {self.start:0.3f}s")
-        lines.append(f"Secs  = {self.secs:0.3f}s")
         lines.append(f"DC    = {self.dc:0.3f} = {dbv(self.dc):0.1f} dBFS")
         lines.append(f"Max   = {self.max:0.3f} = {dbv(self.max):0.1f} dBFS")
         lines.append(f"Min   = {self.min:0.3f} = {dbv(self.min):0.1f} dBFS")
@@ -75,42 +66,52 @@ class TimeStats(Analysis):
 
         return "\n".join(lines)
 
+    @property
+    def crest(self) -> float:
+        """Return the crest factor (max/RMS)."""
+        return self.max / self.rms if self.rms > 0.0 else 0.0
+
+    @property
+    def dbfs(self) -> float:
+        """Return the maximum signal level in dBFS."""
+        return dbv(self.max)
+
+    def print(self) -> None:
+        """Print the statistics."""
+        print(self.__str__())
+
     # @override
     def to_dict(self) -> dict[str, float]:
         """Return an ordered dictionary of statistics."""
         stats_list: list[tuple[str, float]] = [
-            # TODO: more here?
+            ("Desc", self.md.desc),
+            ("Fs", self.md.fs),
+            ("Secs", self.md.secs),
             ("RMS", self.rms),
             ("DC", self.dc),
             ("Crest", self.crest),
-            ("Secs", self.secs),
         ]
         stats = dict(stats_list)
         return stats
+
+    @staticmethod
+    def summary_header() -> str:
+        """Return statistics summary header"""
+        return (
+            "Time Statistics:\n"
+            "Unit                Description        Type    Secs    RMS  Crest  dBFS     DCFS"
+        )
 
     # @override
     def summary(self) -> str:
         """Return statistics summary string."""
         return (
-            f"{self.md.desc:35s} "
-            f"{self.secs:7.3f}s "
-            f"{self.rms:8.4f} "
-            f"{self.dc:8.4f} "
-            f"{self.crest:8.4f}"
+            f"{self.md.unit_id:19} "
+            f"{self.md.desc:18} "
+            f"{self.md.segment.cat.name:6} "
+            f"{self.md.secs:5.1f} "
+            f"{self.rms:6.3f} "
+            f"{self.crest:6.3f}"
+            f"{dbv(self.rms):6.1f} "
+            f"{dbv(abs(self.dc)):8.1f}"
         )
-
-
-class TimeStatsList(list[TimeStats]):
-
-    def print(self, sort_attr: str = "start") -> None:
-        """
-        Print the list sorted on the specified statistic attribute.
-
-        Parameters
-        ----------
-        sort_attr : str, optional
-            Name of the statistic attribute to sort by (default is 'start').
-        """
-        self.sort(key=attrgetter(sort_attr))
-        for time_stats in self:
-            print(str(time_stats))

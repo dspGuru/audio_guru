@@ -1,27 +1,10 @@
 import math
-import numpy as np
+
 import pandas as pd
 from unittest.mock import MagicMock, patch
+
 from component import Component, Components
 from util import Category
-
-
-def test_generate_length_and_amplitude():
-    comp = Component(freq=440.0, pwr=0.6, secs=0.0, cat=Category.Tone)
-    fs = 8000
-    secs = 1.0
-    audio = comp.generate(secs=secs, fs=fs)
-    assert isinstance(audio, np.ndarray)
-    assert audio.shape[0] == int(secs * fs)
-    # amplitude of a pure chirp/chirp(f0==f1) should be approximately the pwr value
-    assert np.isclose(np.max(np.abs(audio)), 0.6, atol=0.06)
-
-
-def test_generate_zero_length_returns_empty_array():
-    comp = Component(freq=1000.0, pwr=0.5)
-    audio = comp.generate(secs=0.0, fs=44100)
-    assert isinstance(audio, np.ndarray)
-    assert audio.size == 0
 
 
 def test_str_and_summary_consistent():
@@ -187,18 +170,6 @@ def test_plot_mock():
         assert mock_subplots.called
         assert mock_ax.stem.called
         assert mock_show.called
-
-
-def test_generate_edge_cases():
-    """Test generate with invalid inputs."""
-    c = Component(freq=100)
-    # Negative secs
-    audio = c.generate(secs=-1.0, fs=44100)
-    assert audio.size == 0
-
-    # Negative fs
-    audio = c.generate(secs=1.0, fs=-100)
-    assert audio.size == 0
 
 
 def test_average_empty():

@@ -2,11 +2,13 @@
 Test sweep_analyzer.py functionality.
 """
 
+import numpy as np
 import pytest
 
 from audio import Audio
 from freq_resp import FreqResp
 from sweep_analyzer import SweepAnalyzer
+import generate
 
 
 def test_sweep_analyzer_integration(examples_dir):
@@ -60,3 +62,50 @@ def test_sweep_analyzer_integration(examples_dir):
 
     # Test print
     analyzer.print(components=True)
+
+
+def test_sweep_short_audio_error():
+    # Create very short audio
+    a = Audio()
+    a.samples = np.zeros(10, dtype=np.float32)
+    analyzer = SweepAnalyzer(a)
+
+    with pytest.raises(RuntimeError, match="Not enough audio samples"):
+        analyzer.get_components()
+
+
+def test_sweep_stereo_conversion():
+    # Stereo sweep
+    # Left: sweep, Right: silence
+    # Mean: half amplitude sweep
+
+    a = generate.sweep(f_start=100, f_stop=1000, secs=2.0, fs=48000)
+    mono_samples = a.samples.copy()
+
+    # Make stereo
+    stereo = np.zeros((len(mono_samples), 2), dtype=np.float32)
+    stereo[:, 0] = mono_samples
+    a.samples = stereo
+
+    analyzer = SweepAnalyzer(a)
+    comps = analyzer.get_components()
+    assert len(comps) > 0
+
+
+def test_sweep_print_coverage():
+    # Just ensure it runs with components=True
+    a = generate.sweep(secs=1.0)
+    analyzer = SweepAnalyzer(a)
+    analyzer.analyze()
+
+    analyzer.print(components=True)
+
+
+def test_get_bands_default_ref():
+    a = generate.sweep(secs=1.0)
+    analyzer = SweepAnalyzer(a)
+    analyzer.get_components()  # Populate components
+
+    # call get_bands with ref_freq=None
+    bands = analyzer.get_bands(ref_freq=None)
+    assert bands is not None

@@ -7,9 +7,7 @@ from audio import Audio
 from component import Components
 from constants import DEFAULT_FS
 from decibels import db
-from freq_bins import FreqBins
 from generate import noise
-from metadata import Metadata
 from noise_analyzer import NoiseAnalyzer
 
 
@@ -19,6 +17,7 @@ def test_noise_analyzer_with_example_file(examples_dir):
     if not fname.exists():
         pytest.skip("test_noise.wav not found in examples")
 
+    # Read audio from file
     audio = Audio()
     assert audio.read(str(fname))
 
@@ -27,18 +26,15 @@ def test_noise_analyzer_with_example_file(examples_dir):
     assert analyzer.audio is audio
     bands = analyzer.analyze()
 
-    # Test get_components
-    # Noise components are those NOT matching a tone?
-    # Or NoiseAnalyzer just treats everything as noise?
-    # NoiseAnalyzer.get_components calls bins.get_components.
+    # Test get_components()
     comps = analyzer.get_components()
     assert len(comps) > 0
-    # Should be effectively just bands of noise?
 
-    # Test analyze (returns bands on EQ centers)
+    # Test analyze() (returns bands on EQ centers)
     assert len(bands) > 0
-    # Standard bands (EQ_BANDS) len is usually fixed (e.g. 31 or 10 or similar ISO bands)
-    # Let's verify we got reasonable power values (not -inf everywhere)
+
+    # Standard bands (EQ_BANDS) len is usually fixed (e.g. 31 or 10 or similar
+    # ISO bands). Verify we got reasonable power values (not -inf everywhere).
     assert any(b.pwr > 0 for b in bands)
     assert bands.name == "Noise Bands"
 
@@ -60,7 +56,6 @@ def test_noise_analyzer_with_filtered_noise():
     # Test get_components
     comps = analyzer.get_components()
     assert len(comps) > 0
-    # Should be effectively just bands of noise?
 
     # Test analyze (returns bands on EQ centers)
     bands = analyzer.analyze()
@@ -73,10 +68,11 @@ def test_noise_analyzer_with_filtered_noise():
     ]
     assert len(band_components) > 0
 
+    # Create passband components
     passband = Components(bands.md, "Passband")
     passband.extend(band_components)
 
-    # Get frequency components
+    # Get primary frequency component of passband
     center = passband.average()
     assert center.freq > cutoff[0] and center.freq < cutoff[1]
     lower = bands.find_freq(cutoff[0])
@@ -97,10 +93,9 @@ def test_noise_analyzer_with_filtered_noise():
 
 def test_reset():
     audio = Audio()
+
     # Dummy
     analyzer = NoiseAnalyzer(audio)
     analyzer.components = [1, 2, 3]  # Mock
     analyzer.reset()
     assert analyzer.components is None or len(analyzer.components) == 0
-    # Implementation: super().reset() sets self.analysis=None?
-    # Actually analyzer.Analyzer.reset needs checking, but usually clears state.

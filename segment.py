@@ -20,45 +20,54 @@ class Segment:
         stop: Stop index
         id: Segment identifier
         cat: Audio category of the segment
+
+    Notes
+    -----
+    As with Python's slice(), the stop index is exclusive, i.e. the segment
+    spans start to stop-1.
     """
 
     fs: float = DEFAULT_FS
     start: int = 0
     stop: int = 1
-    id: int = 0
+    id: int | None = None
     cat: Category = Category.Unknown
 
     def __len__(self):
-        return self.stop - self.start + 1
+        return (self.stop - 1) - self.start
 
     def __str__(self) -> str:
         """Return a string description of the segment."""
-        return f"{self.id}: {self.start_secs:4.1f}-{self.stop_secs:0.1f}s"
+        id_str = "All" if self.id is None else str(self.id)
+        return f"{id_str}: {self.start_secs:4.1f}-{self.stop_secs:0.1f}s"
 
     @property
     def desc(self) -> str:
         """Return a description of the segment, including its category."""
+        if self.id is None:
+            return f"{self.start_secs:0.1f}-{self.stop_secs:0.1f}s {self.cat.name}"
+
         return f"Segment {self.id}: {self.start_secs:0.1f}-{self.stop_secs:0.1f}s {self.cat.name}"
 
     @property
     def secs(self) -> float:
         """Return the length of the segment, in seconds."""
-        return float(len(self)) / float(self.fs) if self.fs > 0 else 0.0
+        return float(len(self)) / float(self.fs)
 
     @property
     def slice(self) -> slice:
         """Return a slice for the segment."""
-        return slice(self.start, self.stop + 1)
+        return slice(self.start, self.stop)
 
     @property
     def start_secs(self) -> float:
         """Return the start seconds of the segment."""
-        return float(self.start) / float(self.fs) if self.fs > 0 else 0.0
+        return float(self.start) / float(self.fs)
 
     @property
     def stop_secs(self) -> float:
         """Return the stop seconds of the segment."""
-        return float(self.stop) / float(self.fs) if self.fs > 0 else 0.0
+        return float(self.stop - 1) / float(self.fs)
 
     @property
     def title(self) -> str:
@@ -68,7 +77,7 @@ class Segment:
         return f"{self.cat.name}_{start}-{stop}s"
 
     def limit(self, max_secs: float) -> None:
-        """Return a segment limited to the specified maximum number of seconds.
+        """Limit the segment to the specified maximum number of seconds.
 
         Parameters
         ----------
@@ -99,7 +108,7 @@ class Segment:
 
         # If the segment is less than one second, return with it unchanged
         n = len(self)
-        if n < self.fs:
+        if n <= self.fs:
             return
 
         # Truncate to an integral number of seconds
@@ -107,7 +116,7 @@ class Segment:
         if n > n_secs:
             # Shorten to an integral number of seconds (floor)
             multiple = n // n_secs
-            self.stop = self.start + multiple * n_secs
+            self.stop = self.start + (multiple * n_secs) + 1
 
 
 class Segments(list[Segment]):

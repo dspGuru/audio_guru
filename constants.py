@@ -18,11 +18,17 @@ __all__ = [
 DEFAULT_AMP: float = 0.6
 """Default amplitude for generated audio."""
 
+DEFAULT_BLOCKSIZE_SECS: float = 10.0
+"""Default audio sample block size in seconds."""
+
 DEFAULT_FREQ: float = 1000.0
 """Default frequency for generated audio in Hz."""
 
 DEFAULT_FS = 44100.0
 """Default sampling frequency in Hz."""
+
+DEFAULT_MAX_NF_DBFS = -60.0
+"""Default maximum allowable noise floor in dBFS."""
 
 MIN_PWR = 1e-12  # -120 dB
 """Minimum power value for audio measurements."""

@@ -1,20 +1,16 @@
-"""Audio tone statistics class"""
+"""Audio tone statistics module"""
 
 import math
-from operator import attrgetter
-from pathlib import Path
 
-import pandas as pd
-
+from analysis import Analysis
 from audio import Audio
 from constants import MIN_DB, MIN_PWR
-from decibels import dbv, db_str
-from time_stats import TimeStats
+from decibels import db_str
 
-__all__ = ["ToneStats", "ToneStatsList"]
+__all__ = ["ToneStats"]
 
 
-class ToneStats(TimeStats):
+class ToneStats(Analysis):
     """Audio Time and Frequency Statistics
 
     Attributes
@@ -33,7 +29,6 @@ class ToneStats(TimeStats):
             Total harmonic distortion.
         thdn : float
             Total harmonic distortion plus noise.
-        Note: Additional attributes are inherited from TimeStats.
     """
 
     def __init__(
@@ -56,8 +51,6 @@ class ToneStats(TimeStats):
             First tone frequency, in Hz.
         freq2 : float
             Second tone frequency, in Hz.
-        dc : float
-            DC (zero Hz) power relative to signal.
         sig : float
             Signal (first tone) power.
         noise : float
@@ -67,8 +60,8 @@ class ToneStats(TimeStats):
         dist : float
             Distortion power.
         """
-        # Set sample and time stats
-        super().__init__(audio)
+        # Initialize super-class
+        super().__init__(audio.md)
 
         # Set frequency stats
         self.freq = freq
@@ -101,26 +94,28 @@ class ToneStats(TimeStats):
         """Return a multi-line string representation of the stats."""
         lines: list[str] = []
 
-        lines.append(f"Analysis ({self.md.segment.desc})")
-        lines.append("-------------------------------")
+        lines.append(f"{self.md.segment.desc}")
+        lines.append("---------------------------------------")
 
         # Frequency stats
         lines.append(f"Freq  = {self.freq:0.1f} Hz")
         if self.freq2 > 0.0:
             lines.append(f"Freq2 = {self.freq2:0.1f} Hz")
 
-        lines += super().__str__().splitlines()[3:]
-
         # Power stats
-        lines.append(f"Sig   = {db_str(self.sig, ' dB')}")
+        lines.append(f"Sig   = {db_str(self.sig, ' dBFS')}")
         lines.append(f"SNR   = {db_str(self.snr, ' dB')}")
         lines.append(f"SFDR  = {db_str(self.sfdr, ' dB')}")
         if self.thdn > 0.0:
-            lines.append(f"THDN  = {db_str(self.thdn)}")
-            lines.append(f"THD   = {db_str(self.thd)}")
+            lines.append(f"THDN  = {db_str(self.thdn, ' dB')}")
+            lines.append(f"THD   = {db_str(self.thd, ' dB')}")
             lines.append(f"THD%  = {self.thd_pct:.3f}%")
 
         return "\n".join(lines)
+
+    def print(self) -> None:
+        """Print the statistics."""
+        print(self.__str__())
 
     @property
     def thd_pct(self) -> float:
@@ -138,28 +133,24 @@ class ToneStats(TimeStats):
             ("SFDR", self.sfdr),
             ("F1", self.freq),
             ("F2", self.freq2),
-            ("RMS", self.rms),
-            ("Crest", self.crest),
             ("Secs", self.secs),
         ]
         stats = self.md.to_dict() | dict(stats_list)
         return stats
 
     @staticmethod
-    def print_summary_header() -> None:
-        """Print statistics summary header"""
-        print(
-            "Description                            THD%    THD   THDN   SFDR     F1     F2   dBFS"
-        )
-        print(
-            "-------------------------------------------------------------------------------------"
+    def summary_header() -> str:
+        """Return statistics summary header"""
+        return (
+            "Tone Statistics:\n"
+            "Unit                Description          THD%    THD   THDN   SFDR     F1     F2"
         )
 
     # @override
     def summary(self) -> str:
         """Return statistics summary string."""
         # Description
-        s = f"{self.md.mfr:8} {self.md.model:10} {self.md.desc:16}"
+        s = f"{self.md.unit_id:19} {self.md.desc:18}"
 
         # THD, THDN
         if self.thd <= 0.0:
@@ -174,72 +165,4 @@ class ToneStats(TimeStats):
         else:
             s = s + "       "
 
-        # dBFS
-        s = s + f"{dbv(self.max):7.1f}"
         return s
-
-
-class ToneStatsList(list[ToneStats]):
-    """Audio tone statistics list class
-
-    A convenience container for collecting, organizing and exporting Audio Stats.
-    This class subclasses list[Stats] and provides high-level operations commonly
-    used when working with collections of audio analysis results:
-    - generating test signals at multiple THD values and collecting their stats,
-    - loading statistics from one or more data files produced by an AudioTest,
-    - producing a pandas.DataFrame representation for downstream analysis, and
-    - writing the collected statistics to CSV.
-
-    Note: This class expects cooperating types/functions to be available at runtime:
-    Stats, AudioTest, and a stats object API that exposes .get_stats(), .md.get(),
-    and .print_summary(). It also depends on pandas for DataFrame creation and
-    pathlib for CSV output.
-    """
-
-    def print(self, sort_stat_attr: str = "thd") -> None:
-        """
-        Print the list sorted on the specified statistic attribute.
-
-        Parameters
-        ----------
-        sort_stat_attr : str, optional
-            Name of the statistic attribute to sort by (default is 'thd').
-        """
-        ToneStats.print_summary_header()
-        self.sort(key=attrgetter(sort_stat_attr))
-        for tone_stats in self:
-            print(tone_stats.summary())
-
-    def get_dataframe(self) -> pd.DataFrame:
-        """
-        Returns a pandas DataFrame representing the list using Stats.get_stats() for
-        each stat in the list.
-        """
-        records = [tone_stats.to_dict() for tone_stats in self]
-        df = pd.DataFrame.from_records(records)
-        return df
-
-    def to_csv(
-        self, filepath: str, index: bool = False, print_head: bool = False
-    ) -> None:
-        """
-        Write the object's DataFrame to the specified CSV file.
-
-        Parameters
-        ----------
-        filepath : str
-            Path to the output CSV file.
-        index : bool, optional
-            Whether to write row indices to the CSV file (default is False).
-        """
-        df = self.get_dataframe()
-        p = Path(filepath)
-        if p.parent and not p.parent.exists():
-            p.parent.mkdir(parents=True, exist_ok=True)
-
-        # Print the data frame header if specified
-        if print_head:
-            print(df.head())
-
-        # Write the DataFrame to CSV with specified options
-        df.to_csv(p, header=True, index=index, float_format="%.1f")

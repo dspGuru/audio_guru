@@ -1,7 +1,6 @@
 """Audio tone test."""
 
 from analyzer import Analyzer
-from audio import Audio
 from component import Component, Components
 from constants import BINS_PER_TONE, MAX_TONES, MIN_AUDIO_LEN
 from segment import Segment
@@ -83,6 +82,7 @@ class ToneAnalyzer(Analyzer):
         # which is at index zero
         components[0].cat = Category.Tone
         self.tone = components[0]
+        components.ref_pwr = self.tone.pwr
         start = 1
 
         # If there is more than one component, compare power and frequency of
@@ -144,6 +144,7 @@ class ToneAnalyzer(Analyzer):
                     if is_harmonic(comp.freq, freq, self.fs, self.MAX_HARM_ORDER):
                         components[idx].cat = Category.Spurious
 
+        components.name = "Tone Components"
         self.components = components
         return components
 
@@ -194,29 +195,6 @@ class ToneAnalyzer(Analyzer):
         )
         return self.analysis
 
-    # @override
-    def print(self, **kwargs) -> None:
-        """
-        Print the specified analysis data.
-
-        Parameters
-        ----------
-        kwargs
-            Keyword arguments.
-        """
-        # Call base class print() method to print header
-        super().print(**kwargs)
-
-        # Print components if specified
-        print_components: bool = kwargs.get("components", False)
-        if print_components:
-            self.components.print(self.tone.pwr)
-            print()
-
-        # Print the result summary
-        print(str(self.analysis))
-        print()
-
     def to_csv(
         self, filepath: str, index: bool = False, print_head: bool = False
     ) -> None:
@@ -234,27 +212,3 @@ class ToneAnalyzer(Analyzer):
         """
         tone_stats: ToneStats = self.analyze()
         tone_stats.to_csv(filepath, index, print_head)
-
-
-def main():
-    """Main function for testing the ToneAnalyzer class."""
-    import sys
-
-    audio = Audio()
-    try:
-        fname = sys.argv[1]
-        if not audio.read(fname):
-            print(f"Error: Could not read audio file '{fname}'")
-            return
-    except IndexError:
-        audio.generate_tone(silence_secs=1.0)
-        audio.write("test_tone.wav")
-        print("Generated test tone audio 'test_tone.wav'")
-
-    analyzer = ToneAnalyzer(audio)
-    stats = analyzer.analyze()
-    print(stats)
-
-
-if __name__ == "__main__":
-    main()

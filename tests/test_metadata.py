@@ -33,7 +33,9 @@ def test_metadata_basic_fields_and_fname_and_unit_id():
     # fields from split_pathname
     assert md.mfr == "Acme"
     assert md.model == "C123"
-    assert md.desc == "Test"  # remaining part becomes description
+    assert (
+        md.desc == "Test:1"
+    )  # remaining part becomes description, appended with segment id
 
     # fs forwarded from segment
     assert md.fs == fs
@@ -53,7 +55,27 @@ def test_metadata_basic_fields_and_fname_and_unit_id():
     assert d["Name"] == "Acme_C123_Test.wav"
     assert d["Mfr"] == "Acme"
     assert d["Model"] == "C123"
-    assert d["Description"] == "Test"
+    assert d["Description"] == "Test:1"
+
+
+def test_secs_property():
+    fs = 48000.0
+    seg = Segment(fs, 0, 999)
+    md = Metadata("Any_Mfr_Model.wav", seg)
+    assert md.secs == len(seg) / seg.fs
+
+
+def test_get_fname_strips_leading_dot_in_extension():
+    seg = Segment(DEFAULT_FS, 0, 101)
+    md = Metadata("Acme_C123_Test.wav", seg)
+    assert md.get_fname(".mp3") == f"{md.mfr}_{md.model}_{seg.title}.mp3"
+
+
+def test_desc_multi_falls_back_to_segment_str():
+    seg = Segment(DEFAULT_FS, 0, 10)
+    md = Metadata("Acme_C123_multi.wav", seg)
+    assert md._desc.lower() == "multi"
+    assert md.desc == str(seg)
 
 
 def test_len_and_set_and_desc_fallback():

@@ -1,4 +1,4 @@
-"""Abstract base class for audio testing and analysis."""
+"""Abstract base class for audio signal analysis."""
 
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -88,7 +88,6 @@ class Analyzer(ABC):
         """
         return Components(self.audio.md)
 
-    @abstractmethod
     def print(self, **kwargs) -> None:
         """
         Print the analysis results sorted on the specified statistic attribute.
@@ -101,14 +100,18 @@ class Analyzer(ABC):
 
         if self.audio.md.pathname:
             print(f"Data from {self.audio.md.pathname}:")
-            print(f"{self.audio.md.segment}")
+            print(f"{self.audio.md.segment.desc}")
+            print()
+
+        print_components: bool = kwargs.get("components", False)
+        if print_components:
+            self.components.print()
             print()
 
     @abstractmethod
     def reset(self) -> None:
         """Resets/creates members which are calculated from audio"""
         self.components = None
-        self.analysis = None
 
     def read(self, fname: str) -> bool:
         """Read audio data from file. Retun True if successful."""

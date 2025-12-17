@@ -62,6 +62,7 @@ class NoiseAnalyzer(Analyzer):
         """
         super().analyze(segment)
         self.analysis = self.get_bands(STD_BANDS)
+        self.analysis.name = "Noise Bands"
 
         return self.analysis
 
@@ -76,59 +77,5 @@ class NoiseAnalyzer(Analyzer):
         bands = bins.get_bands(centers)
         bands.normalize_pwr(ref_freq)
         bands.name = "Noise Bands"
+
         return bands
-
-    # @override
-    def print(self, **kwargs) -> None:
-        """
-        Print the specified analysis data.
-
-        Parameters
-        ----------
-        args
-            Command-line arguments.
-        """
-        super().print(**kwargs)
-
-        # Analyze noise and get the bands
-        bands = self.analyze()
-
-        # Print the components
-        print(f"Noise Components ({len(self.components)} found):")
-        self.components.print()
-        print()
-
-        bands.print()
-        print()
-
-
-def main():
-    """Main function for testing."""
-    import sys
-
-    from generate import noise, silence
-
-    audio = Audio()
-    try:
-        fname = sys.argv[1]
-        if not audio.read(fname):
-            print(f"Error: Could not read audio file '{fname}'")
-            return
-    except IndexError:
-        # Generate test noise audio with leading and trailing silence
-        audio = silence(1.0)
-        audio.append(noise(silence_secs=1.0))
-        audio.write("test_noise.wav")
-        print("Wrote noise audio to 'test_noise.wav'")
-
-    analyzer = NoiseAnalyzer(audio, max_components=25)
-    components = analyzer.get_components()
-    components.print()
-    print()
-
-    bands = analyzer.analyze()
-    bands.print()
-
-
-if __name__ == "__main__":
-    main()

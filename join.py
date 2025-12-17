@@ -37,7 +37,7 @@ def get_args():
     return parser.parse_args()
 
 
-def join_files(patterns: list[str], silence_secs: float = 0.0) -> Audio:
+def join_files(patterns: list[str | Path], silence_secs: float = 0.0) -> Audio:
     """
     Join audio files matching the patterns.
 
@@ -53,12 +53,15 @@ def join_files(patterns: list[str], silence_secs: float = 0.0) -> Audio:
     Audio
         The combined audio object.
     """
+    if silence_secs < 0:
+        raise ValueError("Silence duration must be non-negative")
+
     combined_audio = Audio()
 
     # Collect all matching files
     all_files = []
     for pattern in patterns:
-        matched = sorted(glob.glob(pattern))
+        matched = sorted(glob.glob(str(pattern)))
         if not matched and Path(pattern).exists():
             matched = [pattern]
         all_files.extend(matched)
@@ -101,8 +104,9 @@ def main() -> None:
     print(f"Total Duration: {audio.segment.secs:.2f} seconds")
 
     if args.write:
-        # Check if output file exists? Overwrite?
-        # Audio.write usually overwrites.
+        p = Path(args.write)
+        if p.parent and not p.parent.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
         audio.write(args.write)
         print(f"Wrote combined audio to '{args.write}'")
     else:

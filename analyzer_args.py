@@ -3,7 +3,7 @@
 import argparse
 
 
-def get_args():
+def get_args() -> argparse.Namespace:
     """Get command-line arguments."""
 
     # Create and configure argument parser

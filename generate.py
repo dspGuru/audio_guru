@@ -2,9 +2,12 @@
 
 import math
 
+import numpy as np
+from scipy import signal as scipy_signal
+
 from audio import Audio
-from constants import DEFAULT_AMP, DEFAULT_FREQ, DEFAULT_FS, MIN_PWR
-from decibels import db_to_pwr_ratio
+from constants import DEFAULT_AMP, DEFAULT_FREQ, DEFAULT_FS
+from decibels import db_to_pwr_ratio, MIN_PWR
 
 
 __all__ = ["distortion", "noise", "silence", "sine", "sweep", "write_examples"]
@@ -17,15 +20,9 @@ def distortion(
     secs: float = 10.0,
     silence_secs: float = 0.0,
     fs: float = DEFAULT_FS,
-) -> None:
+) -> Audio:
     """
-    Generate samples with the specified THD values and append their
-    statistics to the list.
-
-    For each THD value in `thds` generate an audio sample with a default
-    configuration and append the resulting Stats to this list. Uses a single
-    AudioTest instance for all generations. Typical usage is to sweep THD
-    values while keeping other signal parameters fixed.
+    Generate samples with the specified THD values.
 
     Parameters
     ----------
@@ -42,9 +39,10 @@ def distortion(
     fs : float
         Sampling frequency in Hz.
     """
-    audio = Audio(fs, name="Distortion")
-    audio.generate_tone(freq=freq, amp=amp, secs=secs, thd=thd)
+    audio = sine(freq=freq, amp=amp, secs=secs, thd=thd, fs=fs)
+    audio.name = "Distortion"
 
+    # Add silence if specified
     if silence_secs > 0.0:
         audio.append(silence(silence_secs, fs))
 
@@ -76,9 +74,28 @@ def noise(
     Audio
         The generated noise audio.
     """
-    audio = Audio(fs)
-    audio.generate_noise(amp, secs)
+    if secs <= 0:
+        raise ValueError("Duration must be positive")
+    if not (0.0 <= amp <= 1.0):
+        raise ValueError("Amplitude must be between 0.0 and 1.0")
 
+    audio = Audio(fs)
+    audio.name = "Noise"
+
+    # Generate white noise
+    n_samples = round(secs * fs)
+    audio.samples = np.random.uniform(low=-amp, high=amp, size=n_samples).astype(
+        audio.DTYPE
+    )
+
+    # Select the entire audio
+    audio.select()
+
+    # Set metadata
+    desc = f"White Noise {secs:0.1f}s"
+    audio.md.set(mfr=audio.name, model="", desc=desc)
+
+    # Add silence if specified
     if silence_secs > 0.0:
         audio.append(silence(silence_secs, fs))
 
@@ -101,8 +118,22 @@ def silence(secs: float = 10.0, fs: float = DEFAULT_FS) -> Audio:
     Audio
         The generated silence audio.
     """
+    if secs <= 0.0:
+        raise ValueError("Duration must be positive")
+
     audio = Audio(fs)
-    audio.generate_silence(secs)
+    audio.name = "Silence"
+
+    # Generate silence
+    audio.samples = np.zeros(round(secs * fs), dtype=audio.DTYPE)
+
+    # Select the entire audio
+    audio.select()
+
+    # Set metadata
+    desc = f"Silence {secs:0.1f}s"
+    audio.md.set(mfr=audio.name, model="", desc=desc)
+
     return audio
 
 
@@ -138,9 +169,41 @@ def sine(
     Audio
         The generated sine wave audio.
     """
-    audio = Audio(fs)
-    audio.generate_tone(freq=freq, secs=secs, amp=amp, thd=thd)
+    if freq <= 0.0:
+        raise ValueError("Frequency must be positive")
+    if secs <= 0.0:
+        raise ValueError("Duration must be positive")
+    if not (0.0 <= amp <= 1.0):
+        raise ValueError("Amplitude must be between 0.0 and 1.0")
 
+    audio = Audio(fs)
+    audio.name = "Sine"
+
+    # Generate sine wave signal
+    t = np.arange(secs * fs) / fs
+    audio.samples = amp * np.sin(2.0 * np.pi * freq * t).astype(audio.DTYPE)
+    audio.select()
+
+    # If specified, generate distortion tone at twice the nominal frequency
+    if thd > MIN_PWR:
+        # Recursive call to generate the harmonic
+        harmonic = sine(freq=freq * 2.0, amp=thd, secs=secs, thd=MIN_PWR, fs=fs)
+        audio += harmonic
+        thd_str = f"{(thd * 100.0):0.3f}%"
+    else:
+        thd_str = ""
+
+    # Set metadata for sine or tone (sine with distortion)
+    if thd <= MIN_PWR:
+        audio.name = "Sine"
+        desc = f"Sine {freq:0.1f}Hz"
+        audio.md.set(mfr=audio.name, model="", desc=desc)
+    else:
+        audio.name = "Tone"
+        desc = f"{freq:0.1f}" if freq < 1000.0 else f"{math.trunc(freq / 1000.0)}k"
+        audio.md.set(mfr=audio.name, model=thd_str, desc=desc)
+
+    # Add silence if specified
     if silence_secs > 0.0:
         audio.append(silence(silence_secs, fs))
 
@@ -173,17 +236,38 @@ def sweep(
         Duration of silence to append after the sweep, in seconds.
     fs : float
         Sampling frequency in Hz.
+    method : str
+        Method of frequency sweep ('linear', 'logarithmic', 'quadratic', 'hyperbolic').
 
     Returns
     -------
     Audio
         The generated sweep audio.
     """
-    audio = Audio(fs)
-    audio.generate_sweep(
-        f_start=f_start, f_stop=f_stop, secs=secs, amp=amp, method=method
-    )
+    if f_start <= 0.0 or f_stop <= 0.0:
+        raise ValueError("Frequencies must be positive")
+    if secs <= 0.0:
+        raise ValueError("Duration must be positive")
+    if not (0.0 <= amp <= 1.0):
+        raise ValueError("Amplitude must be between 0.0 and 1.0")
 
+    audio = Audio(fs)
+    audio.name = "Sweep"
+
+    # Generate sweep signal
+    t = np.arange(secs * fs) / fs
+    audio.samples = amp * scipy_signal.chirp(
+        t, f0=f_start, t1=secs, f1=f_stop, method=method
+    ).astype(audio.DTYPE)
+
+    # Select the entire audio
+    audio.select()
+
+    # Set metadata
+    desc = f"Sweep {f_start:0.1f}Hz to {f_stop:0.1f}Hz"
+    audio.md.set(mfr=audio.name, model="", desc=desc)
+
+    # Add silence if specified
     if silence_secs > 0.0:
         audio.append(silence(silence_secs, fs))
 
@@ -223,13 +307,11 @@ def two_tone(
         The generated two-tone audio.
     """
     # Generate first tone
-    audio = Audio(fs)
-    audio.generate_tone(freq=f1, secs=secs, amp=amp)
+    audio = sine(freq=f1, secs=secs, amp=amp, fs=fs)
 
     # Generate second tone
     amp2 = amp * math.sqrt(db_to_pwr_ratio(-12.0))
-    audio2 = Audio(fs)
-    audio2.generate_tone(freq=f2, secs=secs, amp=amp2)
+    audio2 = sine(freq=f2, secs=secs, amp=amp2, fs=fs)
 
     # Combine tones
     audio += audio2
@@ -268,7 +350,7 @@ def write_examples(path: str = "./examples") -> None:
     print()
 
     # Generate sine wave audio
-    freqs: list[int] = [100, 400, 1000, 10000]
+    freqs: list[int] = [100, 250, 400, 1000, 10000]
     for freq in freqs:
         if freq < 1000:
             freq_name: str = f"{freq}"

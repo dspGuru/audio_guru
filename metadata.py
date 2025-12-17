@@ -4,7 +4,7 @@ import pathlib
 
 from segment import Segment
 
-__all__ = ["Metadata", "split_pathname"]
+__all__ = ["split_pathname", "Metadata"]
 
 
 def split_pathname(pathname: str) -> tuple[str]:
@@ -93,10 +93,17 @@ class Metadata:
         Return the description. If description has not been set, return the
         string representation of the segment.
         """
-        if self._desc:
+        if self._desc and self._desc.lower() != "multi":
+            if self.segment.id is not None:
+                return f"{self._desc}:{self.segment.id}"
             return self._desc
         else:
             return str(self.segment)
+
+    @property
+    def secs(self) -> float:
+        """Return the duration of the segment in seconds."""
+        return len(self.segment) / self.segment.fs
 
     def get_fname(self, extention: str = "wav") -> str:
         """Return a file name for the metadata.

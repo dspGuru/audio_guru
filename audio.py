@@ -592,7 +592,7 @@ class Audio:
             print(f"Error reading audio file: {e}")
             return False
 
-    def open(self, fname: str | Path) -> bool:
+    def open(self, fname: str | Path) -> None:
         """
         Open an audio file.
 
@@ -607,6 +607,8 @@ class Audio:
             True if successful.
         """
         self.sf = sf.SoundFile(fname)
+        self.fs = self.sf.samplerate
+        self.name = self.sf.name
 
     def read_block(self, f=None) -> bool:
         """

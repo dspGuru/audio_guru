@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from component import Component, Components
 from util import Category
+from metadata import Metadata
+from segment import Segment
 
 
 def test_str_and_summary_consistent():
@@ -34,10 +36,6 @@ def test_to_dict_contains_expected_keys_and_values():
     assert math.isclose(d["Frequency (Hz)"], 50.0)
     assert math.isclose(d["Power"], 0.25)
     assert d["Category"] == comp.cat.name
-
-
-from metadata import Metadata
-from segment import Segment
 
 
 def _make_components_container():
@@ -158,9 +156,10 @@ def test_plot_mock():
     comps = _make_components_container()
     comps.append(Component(freq=100, pwr=1.0))
 
-    with patch("matplotlib.pyplot.subplots") as mock_subplots, patch(
-        "matplotlib.pyplot.show"
-    ) as mock_show:
+    with (
+        patch("matplotlib.pyplot.subplots") as mock_subplots,
+        patch("matplotlib.pyplot.show") as mock_show,
+    ):
 
         mock_ax = MagicMock()
         mock_subplots.return_value = (None, mock_ax)

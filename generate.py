@@ -187,7 +187,7 @@ def sine(
     # If specified, generate distortion tone at twice the nominal frequency
     if thd > MIN_PWR:
         # Recursive call to generate the harmonic
-        harmonic = sine(freq=freq * 2.0, amp=thd, secs=secs, thd=MIN_PWR, fs=fs)
+        harmonic = sine(freq=freq * 2.0, amp=amp * thd, secs=secs, thd=MIN_PWR, fs=fs)
         audio += harmonic
         thd_str = f"{(thd * 100.0):0.3f}%"
     else:

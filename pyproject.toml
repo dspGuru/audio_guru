@@ -12,6 +12,7 @@ dependencies = [
     "scipy>=1.16.3",
     "soundfile>=0.13.1",
     "ruff>=0.14.9",
+    "matplotlib>=3.10.8",
 ]
 
 [tool.ruff]

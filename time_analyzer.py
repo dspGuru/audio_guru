@@ -18,6 +18,14 @@ class TimeAnalyzer(Analyzer):
     """
 
     def __init__(self, audio: Audio):
+        """
+        Initialize the time analyzer.
+
+        Parameters
+        ----------
+        audio : Audio
+            Audio data to analyze.
+        """
         super().__init__(audio)
 
     # @override
@@ -47,7 +55,9 @@ class TimeAnalyzer(Analyzer):
 
         Parameters
         ----------
-        seg : Segment | None
+        Parameters
+        ----------
+        segment : Segment | None
             Segment of audio to analyze. If None, use the entire audio.
 
         Returns

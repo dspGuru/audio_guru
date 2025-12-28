@@ -6,7 +6,13 @@ import numpy as np
 from scipy import signal as scipy_signal
 
 from audio import Audio
-from constants import DEFAULT_AMP, DEFAULT_FREQ, DEFAULT_FS
+from constants import (
+    DEFAULT_AMP,
+    DEFAULT_FREQ,
+    DEFAULT_FS,
+    DEFAULT_GEN_SECS,
+    DEFAULT_GEN_SILENCE_SECS,
+)
 from decibels import db_to_pwr_ratio, MIN_PWR
 
 
@@ -17,8 +23,8 @@ def distortion(
     thd: float,
     amp: float = DEFAULT_AMP,
     freq: float = DEFAULT_FREQ,
-    secs: float = 10.0,
-    silence_secs: float = 0.0,
+    secs: float = DEFAULT_GEN_SECS,
+    silence_secs: float = DEFAULT_GEN_SILENCE_SECS,
     fs: float = DEFAULT_FS,
 ) -> Audio:
     """
@@ -51,8 +57,8 @@ def distortion(
 
 def noise(
     amp: float = DEFAULT_AMP,
-    secs: float = 10.0,
-    silence_secs: float = 0.0,
+    secs: float = DEFAULT_GEN_SECS,
+    silence_secs: float = DEFAULT_GEN_SILENCE_SECS,
     fs: float = DEFAULT_FS,
 ) -> Audio:
     """
@@ -102,7 +108,7 @@ def noise(
     return audio
 
 
-def silence(secs: float = 10.0, fs: float = DEFAULT_FS) -> Audio:
+def silence(secs: float = DEFAULT_GEN_SECS, fs: float = DEFAULT_FS) -> Audio:
     """
     Generate silence audio.
 
@@ -140,8 +146,8 @@ def silence(secs: float = 10.0, fs: float = DEFAULT_FS) -> Audio:
 def sine(
     amp: float = DEFAULT_AMP,
     freq: float = 1000.0,
-    secs: float = 10.0,
-    silence_secs: float = 0.0,
+    secs: float = DEFAULT_GEN_SECS,
+    silence_secs: float = DEFAULT_GEN_SILENCE_SECS,
     thd: float = MIN_PWR,
     fs: float = DEFAULT_FS,
 ) -> Audio:
@@ -214,8 +220,8 @@ def sweep(
     amp: float = DEFAULT_AMP,
     f_start: float = 20.0,
     f_stop: float = 20000.0,
-    secs: float = 10.0,
-    silence_secs: float = 0.0,
+    secs: float = DEFAULT_GEN_SECS,
+    silence_secs: float = DEFAULT_GEN_SILENCE_SECS,
     fs: float = DEFAULT_FS,
     method: str = "logarithmic",
 ) -> Audio:
@@ -278,8 +284,8 @@ def two_tone(
     amp: float = DEFAULT_AMP,
     f1: float = 60.0,
     f2: float = 7000.0,
-    secs: float = 10.0,
-    silence_secs: float = 0.0,
+    secs: float = DEFAULT_GEN_SECS,
+    silence_secs: float = DEFAULT_GEN_SILENCE_SECS,
     fs: float = DEFAULT_FS,
 ) -> Audio:
     """
@@ -324,7 +330,18 @@ def two_tone(
 
 
 def write_examples(path: str = "./examples") -> None:
-    """Write example audio files."""
+    """
+    Write example audio files.
+
+    Parameters
+    ----------
+    path : str
+        Directory to write the example files to (default "./examples").
+    """
+
+    DEFAULT_GEN_SILENCE_SECS = 0.5
+    """Default duration of silence in seconds."""
+
     import pathlib
 
     path = pathlib.Path(path)
@@ -334,30 +351,30 @@ def write_examples(path: str = "./examples") -> None:
     print("Generating tones with various distortion values")
     thds = (0.0, 0.01, 0.0001, 1e-5)
     for thd in thds:
-        audio = distortion(thd, silence_secs=1.0)
+        audio = distortion(thd)
         pct = f"{thd*100:.3f}"
-        pct = pct.replace(".", "_")
-        fname = f"test_tone_1k-{pct}_pct.wav"
+        pct = pct.replace(".", "-")
+        fname = f"test_tone_1k-{pct}-pct.wav"
         audio.write(path / fname)
         print(f"Wrote tone with {thd*100:.3f}% THD to '{fname}'")
     print()
 
     # Generate noise audio
     print("Generating noise audio")
-    audio = noise(secs=5.0, silence_secs=1.0)
+    audio = noise()
     audio.write(path / "test_noise.wav")
     print("Wrote noise audio to 'test_noise.wav'")
     print()
 
     # Generate sine wave audio
-    freqs: list[int] = [100, 250, 400, 1000, 10000]
+    freqs: list[int] = [20, 100, 250, 400, 1000, 10000, 20000]
     for freq in freqs:
         if freq < 1000:
             freq_name: str = f"{freq}"
         else:
             freq_name: str = f"{freq // 1000}k"
         print(f"Generating {freq_name} sine wave audio")
-        audio = sine(freq=freq, silence_secs=1.0)
+        audio = sine(freq=freq)
         fname = f"test_tone_{freq_name}.wav"
         audio.write(path / fname)
         print(f"Wrote sine wave audio to '{fname}'")
@@ -365,26 +382,67 @@ def write_examples(path: str = "./examples") -> None:
 
     # Generate two-tone signal with 60 Hz and 7 kHz
     print("Generating two-tone signal with 60 Hz and 7 kHz")
-    audio = two_tone(f1=60, f2=7000, secs=10.0, silence_secs=1.0)
-    fname = "test_60_7k.wav"
+    audio = two_tone(f1=60, f2=7000)
+    fname = "test_tones_60_7k.wav"
+    audio.write(path / fname)
+    print(f"Wrote two-tone signal to '{fname}'")
+    print()
+
+    # Generate two-tone signal with 7 kHz and 60 Hz
+    print("Generating two-tone signal with 7 kHz and 60 Hz")
+    audio = two_tone(f1=7000, f2=60)
+    fname = "test_tones_7k_60.wav"
     audio.write(path / fname)
     print(f"Wrote two-tone signal to '{fname}'")
     print()
 
     # Generate two-tone signal with 19 kHz and 20 kHz
     print("Generating two-tone signal with 19 kHz and 20 kHz")
-    audio = two_tone(f1=19000, f2=20000, secs=10.0, silence_secs=1.0)
-    fname = "test_19k_20k.wav"
+    audio = two_tone(f1=19000, f2=20000)
+    fname = "test_tones_19k_20k.wav"
+    audio.write(path / fname)
+    print(f"Wrote two-tone signal to '{fname}'")
+    print()
+
+    # Generate two-tone signal with 20 kHz and 19 kHz
+    print("Generating two-tone signal with 20 kHz and 19 kHz")
+    audio = two_tone(f1=20000, f2=19000)
+    fname = "test_tones_20k_19k.wav"
     audio.write(path / fname)
     print(f"Wrote two-tone signal to '{fname}'")
     print()
 
     # Generate sweep audio
     print("Generating sweep audio")
-    audio = sweep(secs=10.0, silence_secs=1.0)
+    audio = sweep()
     fname = "test_sweep.wav"
     audio.write(path / fname)
     print(f"Wrote sweep audio to '{fname}'")
+    print()
+
+    # Design a bandpass filter from 300 Hz to 3 kHz
+    sos = scipy_signal.butter(
+        4, [300, 3000], btype="bandpass", fs=audio.fs, output="sos"
+    )
+
+    # Generate filtered sweep audio
+    print("Generating filtered sweep audio")
+    audio = sweep()
+    audio.samples = scipy_signal.sosfilt(sos, audio.samples).astype(audio.DTYPE)
+
+    fname = "test_filt-sweep.wav"
+    audio.write(path / fname)
+    print(f"Wrote filtered sweep audio to '{fname}'")
+    print()
+
+    # Generate filtered noise audio
+    print("Generating filtered noise audio")
+    audio = noise(secs=5.0, silence_secs=1.0)
+    audio.samples = scipy_signal.sosfilt(sos, audio.samples).astype(audio.DTYPE)
+
+    fname = "test_filt-noise.wav"
+    audio.write(path / fname)
+    print(f"Wrote filtered noise audio to '{fname}'")
     print()
 
 

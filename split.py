@@ -22,7 +22,19 @@ def get_args():
 
 
 def split_file(pathname: str) -> list[str]:
-    """Split a single audio file into segments."""
+    """
+    Split a single audio file into segments.
+
+    Parameters
+    ----------
+    pathname : str
+        Path to the audio file to split.
+
+    Returns
+    -------
+    list[str]
+        List of generated file names.
+    """
     audio = Audio()
     if not audio.read(pathname):
         raise FileNotFoundError(f"Error: Could not read audio file '{pathname}'")

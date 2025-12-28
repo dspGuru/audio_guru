@@ -7,12 +7,52 @@ from scipy.fft import rfft
 from scipy import signal
 
 from component import Component, Components
-from constants import BINS_PER_TONE, MAX_TONES, MIN_PWR
+from constants import MAX_BINS_PER_TONE, MAX_TONES, MIN_PWR
 from decibels import db
 from metadata import Metadata
 from util import alias_freq, Category, Channel
 
 __all__ = ["FreqBins"]
+
+
+def blackmanharris7(M, sym=True):
+    """Return a minimum 7-term Blackman-Harris window.
+
+    Parameters
+    ----------
+    M : int
+        Number of points in the output window. If zero, an empty array
+        is returned. An exception is thrown when it is negative.
+    sym : bool, optional
+        When True (default), generates a symmetric window, for use in filter
+        design.
+        When False, generates a periodic window, for use in spectral analysis.
+
+    Returns
+    -------
+    w : ndarray
+        The window, with the maximum value normalized to 1 (though the value 1
+        does not appear if `M` is even and `sym` is True).
+
+    References
+    ----------
+    "The Use of DFT Windows in Signal-to-Noise Ratio and Harmonic Distortion
+    Computations", IEEE Transactions on Instrumentation and Measurement,
+    April 1994, vol. 43, pp 194-199, by O. M. Solomon, Jr.
+    """
+    a = np.asarray(
+        [
+            0.271051400693424,
+            0.433297939234485,
+            0.21812299954311,
+            0.06592544638803099,
+            0.010811742098371,
+            0.000776584825226,
+            0.000013887217352,
+        ],
+        dtype=np.float64,
+    )
+    return signal.windows.general_cosine(M, a, sym=sym)
 
 
 class FreqBins:
@@ -31,19 +71,29 @@ class FreqBins:
         Noise power in the audio signal.
     md : Metadata
         Metadata of the audio being analyzed.
+    tones : Components
+        Tone components found in the audio.
+    n_samples : int
+        Number of samples in the audio signal.
     """
 
     def __init__(
-        self, samples: np.ndarray, md: Metadata, channel: Channel = Channel.Mean
-    ):
-        """Initialize frequency bins.
+        self,
+        samples: np.ndarray,
+        md: Metadata,
+        channel: Channel = Channel.Unknown,
+    ) -> None:
+        """
+        Initialize the frequency bins.
 
         Parameters
         ----------
         samples : np.ndarray
-            Audio samples to analyze.
+            Audio samples.
         md : Metadata
-            Metadata of the audio being analyzed.
+            Metadata associated with the audio.
+        channel : Channel
+            Channel for which to compute bins (default is Channel.Unknown).
         """
         # Initialize attributes
         assert isinstance(md, Metadata)
@@ -70,17 +120,20 @@ class FreqBins:
         else:
             self.channel = Channel.Unknown
 
+        # Store number of audio samples being analyzed
+        self.n_samples = len(x)
+
         # Calculate DC and remove it
         self.dc = float(np.mean(x))
         x -= self.dc
 
         # Window the signal
-        w = signal.windows.blackmanharris(len(x))
+        w = blackmanharris7(len(x))
         xw = x * w
 
         # Compute normalized real FFT
         yf = rfft(xw, norm="forward")
-        self.bins = yf * yf.conjugate().real
+        self.bins = (yf * yf.conjugate()).real
 
     def __len__(self):
         """Return the length of the entire audio data."""
@@ -216,13 +269,19 @@ class FreqBins:
 
         return bands
 
-    def get_components(self, max_components: int = 256) -> Components:
-        """Get frequency components.
+    def get_components(self, max_components: int = 10) -> Components:
+        """
+        Identify frequency components in the audio.
+
+        Parameters
+        ----------
+        max_components : int
+            Maximum number of components to return (default 10).
 
         Returns
         -------
         Components
-            List of frequency components.
+            List of identified frequency components.
         """
         components = Components(self.md)
 
@@ -240,9 +299,7 @@ class FreqBins:
 
         return components
 
-    def get_tones(
-        self, w_tol: int = BINS_PER_TONE, max_components: int = MAX_TONES
-    ) -> Components:
+    def get_tones(self, max_components: int = MAX_TONES) -> Components:
         """
         Find the audio's components, DC, and noise.
 
@@ -267,12 +324,28 @@ class FreqBins:
         last_bin = len(bins) - 1
         while len(tones) < max_components:
             center = int(np.where(bins == bins.max())[0][0])
-            first = max(center - w_tol, 0)
-            last = min(center + w_tol, last_bin)
-            freq = self.bin_to_freq(center)
-            pwr = float(sum(bins[first:last]))
 
-            # Recalculate center frequency as power-weighted average
+            # Find the first bin, which is the first before the center which
+            # has monotonically decreasing power
+            first = center
+            while first > 0 and bins[first - 1] <= bins[first]:
+                first -= 1
+
+            # Find the last bin, which is the last after the center which has
+            # monotonically decreasing power
+            last = center
+            while last < last_bin and bins[last + 1] <= bins[last]:
+                last += 1
+            last += 1
+
+            # If the number of bins spanned is greater than MAX_BINS_PER_TONE,
+            # limit the span to MAX_BINS_PER_TONE, with clipping at the edges
+            if last - first > MAX_BINS_PER_TONE:
+                first = max(0, center - MAX_BINS_PER_TONE // 2)
+                last = min(last_bin + 1, center + MAX_BINS_PER_TONE // 2)
+
+            # Calculate the center frequency as power-weighted average of the
+            # tone's bins
             weighted_sum = 0.0
             total_power = 0.0
             for bin in range(first, last):
@@ -281,6 +354,9 @@ class FreqBins:
                 weighted_sum += bin_freq * bin_pwr
                 total_power += bin_pwr
             freq = weighted_sum / total_power if total_power > 0 else freq
+
+            # Calculate the power of the tone as the sum of the tone's bins
+            pwr = float(sum(bins[first:last]))
 
             # Create tone component
             tone = Component(
@@ -345,6 +421,13 @@ class FreqBins:
         -------
         bool
             True if the audio is a sine wave.
+
+        NOTES
+        -----
+        The function does not check for significant skirt energy, which
+        might occur if the signal was clipped, such as with a sweep signal.
+        Therefore, the signal should be checked as a possible sweep before
+        using this function.
         """
         # Get components
         tones = self.get_tones()
@@ -368,40 +451,41 @@ class FreqBins:
 
     def bin_to_freq(self, bin: int) -> float:
         """Return the frequency of the bin number."""
-        return self.fs * 0.5 * bin / len(self.bins)
+        return self.fs * bin / self.n_samples
 
     def freq_to_bin(self, freq: float) -> int:
         """Return the bin number of the frequency."""
         if freq < 0.0:
             raise ValueError("Frequency must be non-negative")
-        return round(freq / (self.fs * 0.5) * len(self.bins))
+        return round(freq / self.fs * self.n_samples)
 
     def freq_in_list(
-        self, freq: float, freqs: list[float], bins_per_component: int
+        self, freq: float, freq_list: list[float], bins_per_component: int = 3
     ) -> bool:
         """
-        Determine if the specified frequency is in the list of frequencies.
+        Check if the specified frequency is present in the list of frequencies.
 
         Parameters
         ----------
         freq : float
-            Frequency to test.
-        freqs : list[float]
-            List of frequencies to search.
+            Frequency to check.
+        freq_list : list[float]
+            List of frequencies to check against.
+        bins_per_component : int
+            Number of bins to consider around the target frequency (default 3).
 
         Returns
         -------
         bool
-            True if the inputs are valid and the specified frequency is in the
-            list of frequencies.
+            True if the frequency is in the list (within tolerance).
         """
 
         # Return False if any input is invalid
-        if freq <= 0.0 or not freqs:
+        if freq <= 0.0 or not freq_list:
             return False
 
         # Check if frequency is within tolerance of any frequency in the list
-        for target_freq in freqs:
+        for target_freq in freq_list:
             target_freq = alias_freq(target_freq, self.fs)
             bin_diff = self.freq_to_bin(abs(freq - target_freq))
             if bin_diff <= bins_per_component:

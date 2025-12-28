@@ -11,6 +11,15 @@ class UnitStats:
     """Class to hold unit statistics."""
 
     def __init__(self, unit_id: str) -> None:
+        """
+        Initialize unit statistics.
+
+        Parameters
+        ----------
+        unit_id : str
+            Identifier for the unit, which is conventionally in the form of
+            "Manufacture_Model".
+        """
         self.unit_id = unit_id
         self.num_tests = 0
         self.results: dict[str, float] = {}
@@ -20,7 +29,14 @@ class UnitStats:
         self.freq_response: Components = Components(Metadata("", Segment(DEFAULT_FS)))
 
     def aggregate(self, other: "UnitStats") -> None:
-        """Aggregate statistics from another UnitStats instance."""
+        """
+        Aggregate statistics from another UnitStats instance.
+
+        Parameters
+        ----------
+        other : UnitStats
+            Another UnitStats instance to aggregate from.
+        """
         self.num_tests += other.num_tests
         for test_name, result in other.results.items():
             if test_name in self.results:
@@ -88,7 +104,18 @@ class UnitStatsManager:
         self.units: dict[str, UnitStats] = {}
 
     def add_result(self, unit_id: str, test_name: str, result: float) -> None:
-        """Add a test result for a specific unit."""
+        """
+        Add a test result for a specific unit.
+
+        Parameters
+        ----------
+        unit_id : str
+            Identifier for the unit.
+        test_name : str
+            Name of the test.
+        result : float
+            Result of the test.
+        """
         if unit_id not in self.units:
             self.units[unit_id] = UnitStats(unit_id)
         unit_stats = self.units[unit_id]

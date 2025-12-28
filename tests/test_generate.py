@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 
 from audio import Audio
-from constants import DEFAULT_FS
+from constants import DEFAULT_FS, DEFAULT_FREQ
 from generate import silence, noise, sine, sweep, distortion, write_examples
 from util import Category
 
@@ -40,7 +40,7 @@ def test_noise():
 
 def test_sine():
     fs = DEFAULT_FS
-    freq = 1000.0
+    freq = DEFAULT_FREQ
     secs = 10.0
     a = sine(freq=freq, secs=secs, fs=fs)
 
@@ -76,11 +76,11 @@ def test_sweep():
 def test_distortion():
     fs = DEFAULT_FS
     # 1% THD
-    a = distortion(thd=0.01, freq=1000.0, secs=0.5, fs=fs)
+    a = distortion(thd=0.01, freq=DEFAULT_FREQ, secs=0.5, fs=fs)
 
     assert isinstance(a, Audio)
     # Fundamental should be present
-    assert a.freq == pytest.approx(1000.0, abs=5.0)
+    assert a.freq == pytest.approx(DEFAULT_FREQ, abs=5.0)
     # Hard to test exact THD without analysis, but we can check it returns audio
     assert len(a) > 0
 
@@ -98,9 +98,12 @@ def test_write_examples(tmp_path, monkeypatch):
     assert (p / "test_tone_400.wav").exists()
     assert (p / "test_tone_1k.wav").exists()
     assert (p / "test_tone_10k.wav").exists()
-    assert (p / "test_60_7k.wav").exists()
-    assert (p / "test_19k_20k.wav").exists()
+    assert (p / "test_tones_60_7k.wav").exists()
+    assert (p / "test_tones_7k_60.wav").exists()
+    assert (p / "test_tones_19k_20k.wav").exists()
     assert (p / "test_sweep.wav").exists()
+    assert (p / "test_filt-sweep.wav").exists()
+    assert (p / "test_filt-noise.wav").exists()
 
     # Check for at least one THD tone file
     assert list(p.glob("test_tone_1k-*pct.wav"))

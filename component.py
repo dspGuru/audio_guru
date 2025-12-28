@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import scipy.stats
+
 
 from analysis import Analysis
 from constants import MIN_DB, MIN_PWR
@@ -125,7 +127,16 @@ class Components(list[Component]):
     """
 
     def __init__(self, md: Metadata, name: str = "Components") -> None:
-        """Initialize with the associated Metadata."""
+        """
+        Initialize with the associated metadata.
+
+        Parameters
+        ----------
+        md : Metadata
+            Metadata associated with the components list.
+        name : str
+            Optional name for the components list. Default is "Components".
+        """
         super().__init__()
         assert isinstance(md, Metadata)
         self.md = copy(md)
@@ -200,6 +211,12 @@ class Components(list[Component]):
         """
         Compute the average Component across all entries.
 
+        Parameters
+        ----------
+        freq_tol : float
+            Frequency tolerance in Hz for determining if the average component
+            should be a Tone or a Band. Default is 1.0 Hz.
+
         Returns
         -------
         Component
@@ -216,8 +233,10 @@ class Components(list[Component]):
         if not self:
             return Component()
 
-        # Calculate the average frequency as its geomentric mean
-        freq = float(np.prod([comp.freq for comp in self])) ** (1.0 / len(self))
+        # Calculate the average frequency as its power-weighted mean
+        freq = sum(comp.freq * comp.pwr for comp in self) / sum(
+            comp.pwr for comp in self
+        )
 
         # Calculate the average power, timestamp, and frequency bounds
         pwr = sum(comp.pwr for comp in self) / len(self)
@@ -248,24 +267,24 @@ class Components(list[Component]):
         idx = self.find_index(freq)
         if idx is None:
             return None
-
         return self[idx]
 
     def find_index(self, freq: float, tol_hz: float = 100.0) -> int | None:
         """
-        Find and return the Component whose frequency is nearest to
-        the specified frequency.
+        Find the index of the Component with frequency nearest to the specified
+        frequency.
 
         Parameters
         ----------
         freq : float
             Frequency in Hz to search for.
+        tol_hz : float
+            Frequency tolerance in Hz (default 100.0).
 
         Returns
         -------
         int | None
-            Index of the Component with the frequency nearest to the specified
-            frequency. Returns None if the list is empty.
+            Index of the component if found within tolerance, otherwise None.
         """
         # Return None if the list is empty
         if not self:
@@ -341,8 +360,19 @@ class Components(list[Component]):
     def band_edges(
         self, lower: float, upper: float, attn_db: float = 3.0
     ) -> tuple[float, float]:
-        """Find the lower and upper frequency edges at the specified attenuation level
-        relative to the average power between the edges."""
+        """
+        Find the lower and upper frequency edges at the specified attenuation
+        level relative to the average power between the edges.
+
+        Parameters
+        ----------
+        lower : float
+            Lower frequency bound to search.
+        upper : float
+            Upper frequency bound to search.
+        attn_db : float
+            Attenuation level in dB (default 3.0).
+        """
         assert lower < upper
         lower_idx = self.find_index(lower)
         upper_idx = self.find_index(upper)
@@ -367,7 +397,10 @@ class Components(list[Component]):
         try:
             lower_edge = max(candidates)
         except ValueError:
-            lower_edge = lower
+            # Fallback: check if we have any components in range [lower, center]
+            # If so, use the lowest one. Otherwise default to search limit.
+            comps_in_range = [c.freq for c in self if lower <= c.freq <= center_freq]
+            lower_edge = min(comps_in_range) if comps_in_range else lower
 
         # Find upper edge
         candidates = (
@@ -378,7 +411,10 @@ class Components(list[Component]):
         try:
             upper_edge = min(candidates)
         except ValueError:
-            upper_edge = upper
+            # Fallback: check if we have any components in range [center, upper]
+            # If so, use the highest one. Otherwise default to search limit.
+            comps_in_range = [c.freq for c in self if center_freq <= c.freq <= upper]
+            upper_edge = max(comps_in_range) if comps_in_range else upper
 
         return (lower_edge, upper_edge)
 
@@ -405,24 +441,6 @@ class Components(list[Component]):
         ripple = max(pwr_values) - min(pwr_values)
         return ripple
 
-    def plot(self) -> None:
-        """Plot the components as a stem plot."""
-        if not self:
-            print("No components to plot")
-            return
-
-        from matplotlib import pyplot as plt
-
-        _, ax = plt.subplots()
-        freqs = [comp.freq for comp in self]
-        pwrs_db = [db(comp.pwr) for comp in self]
-        ax.stem(freqs, pwrs_db, bottom=MIN_DB, basefmt=" ")
-        ax.set_xlabel("Frequency (Hz)")
-        ax.set_ylabel("Power (dB)")
-        ax.set_title(f"Components for Metadata {self.md.desc}")
-        ax.grid(True)
-        plt.show()
-
     def print(
         self, ref_pwr: float | None = None, max_components: int | None = 10
     ) -> None:
@@ -434,6 +452,8 @@ class Components(list[Component]):
         ref_pwr : float
             Reference power used for dB conversion. Values <= 0 are clipped
             to a small positive minimum to avoid log errors in db().
+        max_components : int
+            Maximum number of components to print (default 10).
         """
         # Use self.ref_pwr if ref_pwr is None
         if ref_pwr is None:
@@ -474,6 +494,21 @@ class Components(list[Component]):
         df = pd.DataFrame.from_records(records)
         return df
 
+    def sort(self, key: str = "freq", reverse: bool = False) -> None:
+        """
+        Sort the components by the specified key.
+
+        Parameters
+        ----------
+        key : str
+            Attribute to sort by (default 'freq').
+        reverse : bool
+            Whether to sort in reverse order (default False).
+        """
+        components = sorted(self, key=lambda x: getattr(x, key), reverse=reverse)
+        self.clear()
+        self.extend(components)
+
     def to_csv(
         self, filepath: str, index: bool = False, print_head: bool = False
     ) -> None:
@@ -486,6 +521,8 @@ class Components(list[Component]):
             Path to the output CSV file.
         index : bool, optional
             Whether to write row indices to the CSV file (default is False).
+        print_head : bool, optional
+            Whether to print the CSV head (default is False).
         """
         df = self.get_dataframe()
         p = Path(filepath)
@@ -498,3 +535,7 @@ class Components(list[Component]):
 
         # Write the DataFrame to CSV with specified options
         df.to_csv(p, header=True, index=index, float_format="%.1f")
+
+    def summary(self) -> str:
+        """Return a summary of the object."""
+        return f"{self.name}: {len(self)} components"

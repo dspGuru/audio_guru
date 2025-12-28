@@ -2,6 +2,7 @@ import pytest
 from unit_stats import UnitStats
 from component import Component
 from util import Category
+from constants import DEFAULT_FREQ
 from decibels import db_to_pwr_ratio
 
 
@@ -37,11 +38,11 @@ class TestUnitStats:
 
     def test_freq_response_aggregation(self):
         stats1 = UnitStats("U1")
-        c1 = Component(freq=1000.0, pwr=1.0, cat=Category.Tone)
+        c1 = Component(freq=DEFAULT_FREQ, pwr=1.0, cat=Category.Tone)
         stats1.freq_response.append(c1)
 
         stats2 = UnitStats("U2")
-        c2 = Component(freq=1000.0, pwr=0.5, cat=Category.Tone)  # Different power
+        c2 = Component(freq=DEFAULT_FREQ, pwr=0.5, cat=Category.Tone)  # Different power
         stats2.freq_response.append(c2)
 
         c3 = Component(freq=2000.0, pwr=0.1, cat=Category.Tone)  # New freq
@@ -52,7 +53,7 @@ class TestUnitStats:
         assert len(stats1.freq_response) == 2
 
         # Check averaged 1kHz component
-        comp_1k = stats1.freq_response.find_freq(1000.0)
+        comp_1k = stats1.freq_response.find_freq(DEFAULT_FREQ)
         assert comp_1k is not None
         assert comp_1k.pwr == pytest.approx((1.0 + 0.5) / 2)  # Magnitude averaged?
         # Wait, the code averages magnitude: comp.magnitude = (comp.magnitude + other_comp.magnitude) / 2
@@ -86,7 +87,7 @@ class TestUnitStats:
         # Add overlap in band for ripple calc (line 70)
         # band edges: 20 to 20000. 100 Hz is in band.
         # Need multiple? Ripple = max - min.
-        c2 = Component(1000.0, 0.5, 0.0, Category.Tone)
+        c2 = Component(DEFAULT_FREQ, 0.5, 0.0, Category.Tone)
         stats.freq_response.append(c2)
 
         stats.print_specs()

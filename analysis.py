@@ -26,7 +26,14 @@ class Analysis(ABC):
         pass
 
     def __init__(self, md: Metadata) -> None:
-        """Initialize the analyzer result."""
+        """
+        Initialize analysis.
+
+        Parameters
+        ----------
+        md : Metadata
+            Metadata associated with the analysis.
+        """
         self.md = copy(md)
 
     @property
@@ -53,6 +60,11 @@ class Analysis(ABC):
     def start(self) -> float:
         """Return the start time of the segment."""
         return self.md.segment.start_secs
+
+    @property
+    def unit_id(self) -> str:
+        """Return the unit ID."""
+        return self.md.unit_id
 
     @abstractmethod
     def to_dict(self) -> dict:

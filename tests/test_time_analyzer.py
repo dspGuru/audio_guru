@@ -4,6 +4,7 @@ import pytest
 
 from audio import Audio
 from component import Components
+from constants import DEFAULT_FS, DEFAULT_FREQ
 import generate
 from time_analyzer import TimeAnalyzer
 from time_stats import TimeStats
@@ -12,7 +13,7 @@ from time_stats import TimeStats
 @pytest.fixture
 def tone_audio():
     """Create a simple tone audio for testing."""
-    audio = generate.sine(freq=1000, secs=1.0, fs=44100)
+    audio = generate.sine(freq=DEFAULT_FREQ, secs=1.1, fs=DEFAULT_FS)
     return audio
 
 

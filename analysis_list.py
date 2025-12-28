@@ -40,21 +40,30 @@ class AnalysisList(list):
         )
         return filtered_list
 
-    def print(self, sort_stat_attr: str = "") -> None:
+    def print(self, sort_attr: str = "", sort_attr2: str = "") -> None:
         """
         Print the list sorted on the specified statistic attribute.
 
         Parameters
         ----------
-        sort_stat_attr : str, optional
-            Name of the statistic attribute to sort by (default is 'thd').
+        sort_attr : str, optional
+            Name of the statistic attribute to sort by (default is '').
+        sort_attr2 : str, optional
+            Name of the secondary statistic attribute to sort by (default is '').
         """
         if self:
-            print(self.summary(sort_stat_attr))
+            print(self.summary(sort_attr, sort_attr2))
 
-    def summary(self, sort_stat_attr: str = "") -> str:
+    def summary(self, sort_attr: str = "desc", sort_attr2: str | None = None) -> str:
         """
-        Returns a summary string for the list.
+        Return a summary string of all analyses.
+
+        Parameters
+        ----------
+        sort_attr : str
+            Attribute to sort by (default 'desc').
+        sort_attr2 : str | None
+            Secondary attribute to sort by (optional).
 
         Returns
         -------
@@ -68,8 +77,11 @@ class AnalysisList(list):
             type(self[0]).summary_header(),
             "--------------------------------------------------------------------------------",
         ]
-        if sort_stat_attr:
-            self.sort(key=attrgetter(sort_stat_attr))
+        if sort_attr:
+            if sort_attr2:
+                self.sort(key=attrgetter(sort_attr, sort_attr2))
+            else:
+                self.sort(key=attrgetter(sort_attr))
 
         for analysis in self:
             summary_lines.append(analysis.summary())
@@ -95,6 +107,8 @@ class AnalysisList(list):
         ----------
         filepath : str
             Path to the output CSV file.
+        print_head : bool, optional
+            Whether to print the CSV head (default is False).
         index : bool, optional
             Whether to write row indices to the CSV file (default is False).
         """

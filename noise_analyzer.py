@@ -1,13 +1,44 @@
 """Audio noise analyzer."""
 
+from analysis import Analysis
 from analyzer import Analyzer
 from audio import Audio
 from component import Components
-from constants import EQ_BANDS, STD_BANDS
+from constants import EQ_BANDS, REF_FREQ, STD_BANDS
+from freq_resp import FreqResp
 from segment import Segment
 from util import Channel
 
 __all__ = ["NoiseAnalyzer"]
+
+
+class NoiseAnalysis(Analysis):
+    """Noise analysis class."""
+
+    def __init__(self, components: Components, bands: Components):
+        super().__init__(components.md)
+        self.components = components
+        self.freq_resp = FreqResp(self.components)
+        self.bands = bands
+
+    # @override
+    def to_dict(self) -> dict:
+        """Convert the analyzer result to a dictionary."""
+        return self.freq_resp.to_dict()
+
+    # @override
+    def summary(self) -> str:
+        """Return a one-line summary of the analyzer result."""
+        return self.freq_resp.summary()
+
+    # @override
+    @staticmethod
+    def summary_header() -> str:
+        """Return the header for the summary table."""
+        return (
+            "Noise Frequency Response:\n"
+            "Unit                Description        Type      Lower   Upper  Ripple   Minimum"
+        )
 
 
 class NoiseAnalyzer(Analyzer):
@@ -25,6 +56,16 @@ class NoiseAnalyzer(Analyzer):
     """
 
     def __init__(self, audio: Audio, max_components: int = 256):
+        """
+        Initialize the noise analyzer.
+
+        Parameters
+        ----------
+        audio : Audio
+            Audio data to analyze.
+        max_components : int
+            Maximum number of frequency components to identify (default 256).
+        """
         super().__init__(audio)
         self.max_components = max_components
 
@@ -57,17 +98,27 @@ class NoiseAnalyzer(Analyzer):
 
         Returns
         -------
-        Components
-            Noise frequency components on equalizer band centers.
+        NoiseAnalysis
+            Noise analysis.
         """
         super().analyze(segment)
-        self.analysis = self.get_bands(STD_BANDS)
-        self.analysis.name = "Noise Bands"
+        self.bands = self.get_bands(STD_BANDS)
+        self.bands.name = "Noise Bands"
+        self.analysis = NoiseAnalysis(self.components, self.bands)
 
         return self.analysis
 
-    def get_bands(self, centers=EQ_BANDS, ref_freq: float = 1000.0) -> Components:
-        """Get noise frequency components on equalizer band centers."""
+    def get_bands(self, centers=EQ_BANDS, ref_freq: float = REF_FREQ) -> Components:
+        """
+        Get noise frequency components on equalizer band centers.
+
+        Parameters
+        ----------
+        centers : list[float]
+            List of center frequencies for bands (default EQ_BANDS).
+        ref_freq : float
+            Reference frequency for normalization (default REF_FREQ).
+        """
         bins = self.audio.get_bins()
 
         # If audio is a sine, use channel difference for noise analysis

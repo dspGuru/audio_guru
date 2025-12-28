@@ -1,6 +1,6 @@
 import pytest
 from audio import Audio
-from constants import DEFAULT_FS
+from constants import DEFAULT_FS, DEFAULT_FREQ
 from unit_stats import UnitStats
 from util import Category
 
@@ -23,7 +23,7 @@ class TestAudioAnalysis:
         assert len(audio) > 0
 
         # Verify Frequency
-        assert audio.freq == pytest.approx(1000.0, abs=5.0)  # +/- 5Hz tolerance
+        assert audio.freq == pytest.approx(DEFAULT_FREQ, abs=5.0)  # +/- 5Hz tolerance
 
         # Calculate Stats manually to verify UnitStats integration
         stats = UnitStats("Sine1k")
@@ -65,11 +65,11 @@ class TestAudioAnalysis:
 
     def test_distortion_file(self, examples_dir):
         # test_tone_1k-1_000_pct.wav -> 1% THD
-        fname = examples_dir / "test_tone_1k-1_000_pct.wav"
+        fname = examples_dir / "test_tone_1k-1-000-pct.wav"
         audio = Audio()
-        audio.read(fname)
+        assert audio.read(fname)
 
-        assert audio.freq == pytest.approx(1000.0, abs=5.0)
+        assert audio.freq == pytest.approx(DEFAULT_FREQ, abs=5.0)
 
         # We can't easily calculate THD without using the proper Analyzer or reproducing logic.
         # But we can ensure it loads and is categorized as Tone.

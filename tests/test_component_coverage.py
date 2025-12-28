@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+
 from component import Component, Components
 from util import Category
 from metadata import Metadata
@@ -45,12 +46,6 @@ def test_components_lists_edge_cases():
     comps.normalize_pwr(1000)  # Ref is c_zero, pwr=0 -> returns early
     assert comps[0].pwr == 1.0  # Unchanged
 
-    # plot empty
-    # Mock plt first just in case
-    with patch("matplotlib.pyplot.show"):
-        comps_empty = Components(md)
-        comps_empty.plot()  # Should print "No components to plot" (or just return)
-
 
 def test_components_band_edges_failures():
     md = Metadata("test", Segment(1000, 0, 100))
@@ -91,21 +86,6 @@ def test_components_ripple_empty():
     # Range with no components
     r = comps.ripple(200, 300)
     assert r == 0.0
-
-
-def test_components_plot(capsys):
-    md = Metadata("test", Segment(1000, 0, 100))
-    comps = Components(md)
-    comps.append(Component(freq=100, pwr=1.0))
-
-    # We need to mock matplotlib.pyplot.subplots and show
-    with patch("matplotlib.pyplot.subplots") as mock_subplots:
-        mock_fig = MagicMock()
-        mock_ax = MagicMock()
-        mock_subplots.return_value = (mock_fig, mock_ax)
-        with patch("matplotlib.pyplot.show"):
-            comps.plot()
-            mock_ax.stem.assert_called()
 
 
 def test_components_print_opts(capsys):

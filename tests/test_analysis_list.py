@@ -53,7 +53,7 @@ def test_print_unsorted(analysis_list, capsys):
 
 
 def test_print_sorted(analysis_list, capsys):
-    analysis_list.print(sort_stat_attr="thd")
+    analysis_list.print(sort_attr="thd")
     captured = capsys.readouterr()
     expected_output = (
         "Header\n"

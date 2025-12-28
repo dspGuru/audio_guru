@@ -16,7 +16,7 @@ class TestTimeStats:
         audio.samples = np.ones(1000, dtype=np.float32)
 
         # Select the segment so Audio properties work
-        audio.select(Segment(1000.0, 0, 1001))  # 1 second
+        audio.select(Segment(1000.0, 0, 1000))  # 1 second
 
         # In Audio class:
         # dc property calculates mean
@@ -80,11 +80,11 @@ class TestTimeStats:
 
 
 def test_len_secs_and_slice_properties():
-    s = Segment(fs=100.0, start=0, stop=101, id=0)
+    s = Segment(fs=100.0, start=0, stop=100, id=0)
     assert len(s) == 100
     assert s.secs == pytest.approx(1.0)
-    # slice is inclusive of stop index in this implementation -> stop + 1
-    assert s.slice == slice(0, 101)
+    # slice is inclusive of stop index in this implementation -> stop
+    assert s.slice == slice(0, 100)
     assert s.start_secs == pytest.approx(0.0)
     assert s.stop_secs == pytest.approx(1.0)
 
@@ -117,10 +117,10 @@ def test_trunc_behavior_and_noop_for_short_segments():
     short.trunc(1.0)
     assert short.stop == 50  # unchanged
 
-    # longer segment: use stop=301 so length=301, fs=100 -> n_secs=100, multiple=3 => stop = 301
-    long = Segment(fs=100.0, start=0, stop=301)
+    # longer segment: use stop=300 so length=300, fs=100 -> n_secs=100, multiple=3 => stop = 300
+    long = Segment(fs=100.0, start=0, stop=300)
     long.trunc(1.0)
-    assert long.stop == 301
+    assert long.stop == 300
 
 
 def test_segments_str_lists_all_segments():

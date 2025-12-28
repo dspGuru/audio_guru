@@ -15,6 +15,13 @@ def get_args() -> argparse.Namespace:
         "pattern", metavar="PATTERN", help="file name pattern", nargs="?", default=""
     )
     parser.add_argument(
+        "-d",
+        "--device",
+        action="store_true",
+        help="input audio sample data from the system's default sound device",
+        default=False,
+    )
+    parser.add_argument(
         "-c",
         "--components",
         action="store_true",
@@ -29,18 +36,11 @@ def get_args() -> argparse.Namespace:
         default=None,
     )
     parser.add_argument(
-        "-g",
-        "--generate",
-        action="store_true",
-        help="generate test audio",
-        default=None,
-    )
-    parser.add_argument(
         "-l",
         "--max-length",
         metavar="LENGTH",
         type=float,
-        default=0.0,
+        default=60.0,
         help="maximum test audio length in seconds",
     )
     parser.add_argument(

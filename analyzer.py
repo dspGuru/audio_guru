@@ -1,13 +1,14 @@
 """Abstract base class for audio signal analysis."""
 
 from abc import ABC, abstractmethod
+from copy import copy
 from pathlib import Path
 
 import pandas as pd
 
 from audio import Audio
 from component import Components
-from constants import MIN_AUDIO_LEN
+from constants import DEFAULT_MAX_ANALYSIS_SECS, MIN_SEGMENT_SECS
 from segment import Segment
 from time_stats import TimeStats
 
@@ -63,7 +64,7 @@ class Analyzer(ABC):
 
         Parameters
         ----------
-        seg : Segment | None
+        segment : Segment | None
             Segment of audio to analyze. If None, use the entire audio.
 
         Returns
@@ -97,12 +98,6 @@ class Analyzer(ABC):
         kwargs
             Keyword arguments.
         """
-
-        if self.audio.md.pathname:
-            print(f"Data from {self.audio.md.pathname}:")
-            print(f"{self.audio.md.segment.desc}")
-            print()
-
         print_components: bool = kwargs.get("components", False)
         if print_components:
             self.components.print()
@@ -114,7 +109,14 @@ class Analyzer(ABC):
         self.components = None
 
     def read(self, fname: str) -> bool:
-        """Read audio data from file. Retun True if successful."""
+        """
+        Read audio data from file. Retun True if successful.
+
+        Parameters
+        ----------
+        fname : str
+            File name to read.
+        """
         self.reset()
         return self.audio.read(fname)
 
@@ -129,25 +131,38 @@ class Analyzer(ABC):
         """
         return self.audio.get_segments()
 
-    def select(self, segment: Segment | None = None, max_secs: float = 10.0) -> None:
+    def select(
+        self,
+        segment: Segment | None = None,
+        max_secs: float = DEFAULT_MAX_ANALYSIS_SECS,
+    ) -> None:
         """
         Select a segment of audio for analysis.
 
         Parameters
         ----------
-        seg : Segment
+        Sample rate check.
+
+        Parameters
+        ----------
+        segment : Segment | None
             The audio segment to select. If None, select the entire audio.
+        max_secs : float
+            Maximum duration of the selection in seconds (default
+            DEFAULT_MAX_ANALYSIS_SECS).
         """
         if segment is None:
             segment = Segment(self.fs, 0, len(self.audio))
+        else:
+            segment = copy(segment)
 
-        # Truncate the slice to a whole number of seconds
+        # Truncate the slice to a whole number of seconds and limit to max_secs
         segment.trunc(1.0)
         segment.limit(max_secs)
 
-        # Raise ValueError if the selected audio sample is too short for
+        # Raise ValueError if the selected audio segment is too short for
         # meaningful analysis
-        if len(segment) < MIN_AUDIO_LEN:
+        if segment.secs < MIN_SEGMENT_SECS:
             raise ValueError(f"Audio segment {segment} is too short to analyze")
 
         self.audio.select(segment)
@@ -172,6 +187,8 @@ class Analyzer(ABC):
             Path to the output CSV file.
         index : bool, optional
             Whether to write row indices to the CSV file (default is False).
+        print_head : bool, optional
+            Whether to print the CSV head (default is False).
         """
         df = self.get_dataframe()
         p = Path(filepath)

@@ -10,7 +10,7 @@ def test_init():
     audio = unittest.mock.Mock(spec=Audio)
     audio.md = Metadata("test_unit", Segment(48000))
     audio.get_noise_floor.return_value = (-60.0, 1000)  # -60 dB, sample 1000
-    audio.num_channels.return_value = 2
+    type(audio).num_channels = unittest.mock.PropertyMock(return_value=2)
 
     stats = AudioStats(audio)
 
@@ -33,7 +33,7 @@ def test_noise_floor_secs():
     # fs = 48000. idx = 48000 -> 1.0 sec.
     audio.md = Metadata("test_unit", Segment(48000))
     audio.get_noise_floor.return_value = (-60.0, 24000)
-    audio.num_channels.return_value = 1
+    type(audio).num_channels = unittest.mock.PropertyMock(return_value=1)
 
     stats = AudioStats(audio)
     assert stats.noise_floor_secs == 0.5
@@ -43,7 +43,7 @@ def test_to_dict():
     audio = unittest.mock.Mock(spec=Audio)
     audio.md = Metadata("test_unit", Segment(48000))
     audio.get_noise_floor.return_value = (-80.5, 4800)  # 0.1s
-    audio.num_channels.return_value = 2
+    type(audio).num_channels = unittest.mock.PropertyMock(return_value=2)
 
     stats = AudioStats(audio)
     d = stats.to_dict()
@@ -65,7 +65,7 @@ def test_summary_valid_noise_floor():
     # 20 * log10(x).
     # If we want -60dB, input should be 0.001.
     audio.get_noise_floor.return_value = (0.001, 48000)  # 1.0s. 0.001 -> -60dBV
-    audio.num_channels.return_value = 2
+    type(audio).num_channels = unittest.mock.PropertyMock(return_value=2)
 
     stats = AudioStats(audio)
     s = stats.summary()
@@ -84,7 +84,7 @@ def test_summary_no_noise_floor():
 
     # If noise floor is 0.0
     audio.get_noise_floor.return_value = (0.0, 0)
-    audio.num_channels.return_value = 1
+    type(audio).num_channels = unittest.mock.PropertyMock(return_value=1)
 
     stats = AudioStats(audio)
     s = stats.summary()

@@ -14,7 +14,7 @@ class AudioStats(Analysis):
         super().__init__(audio.md)
 
         self.noise_floor, self.noise_floor_idx = audio.get_noise_floor()
-        self.num_channels = audio.num_channels()
+        self.num_channels = audio.num_channels
 
     @property
     def noise_floor_secs(self) -> float:
@@ -44,6 +44,7 @@ class AudioStats(Analysis):
         return (
             f"{self.md.unit_id:19} "
             f"{self.md.desc:18} "
+            f"{self.md.fs:6.0f} "
             f"{self.num_channels:8} "
             f"{nf_str}"
         )
@@ -53,5 +54,5 @@ class AudioStats(Analysis):
         """Return statistics summary header"""
         return (
             "Audio Statistics:\n"
-            "Unit                Description        Channels    Noise Floor"
+            "Unit                Description            Fs    Chnls   Noise Floor"
         )

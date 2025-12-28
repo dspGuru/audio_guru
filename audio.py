@@ -2,16 +2,25 @@
 
 from copy import copy
 from pathlib import Path
+import time
 
 import numpy as np
 import scipy.linalg as la
 from scipy import signal
+import sounddevice as sd
 import soundfile as sf
 
 from constants import (
     DEFAULT_BLOCKSIZE_SECS,
     DEFAULT_FS,
     DEFAULT_MAX_NF_DBFS,
+    MIN_SEGMENT_SECS,
+    MAX_SEGMENT_SECS,
+    MIN_FREQ,
+    MIN_SILENCE_PEAK,
+    SILENCE_MIN_SECS,
+    SILENCE_THRESH_RATIO,
+    SILENCE_WINDOW_SECS,
 )
 from decibels import dbv
 from freq_bins import FreqBins
@@ -24,10 +33,10 @@ __all__ = ["Audio"]
 
 class Audio:
     """
-    Read, write, generate and store audio data.
+    Read, store and write audio data.
 
-    Attributes
-    ----------
+    Attributes and Properties
+    -------------------------
     samples : np.ndarray
         Audio signal samples.
     name : str
@@ -36,42 +45,91 @@ class Audio:
         Selected audio segment.
     md : Metadata
         Audio metadata.
-    dc : float
-        DC offset of the audio signal.
     noise : float
         Noise power in the audio signal.
+    max_segment_secs : float
+        Maximum segment length in seconds.
+    next_id : int
+        Next segment identifier.
+    sf : soundfile.SoundFile
+        Soundfile object for reading audio.
+    stream : sounddevice.InputStream
+        Sounddevice stream for reading audio.
+    blocksize : int
+        Block size for reading audio.
+    min_segment_secs : float
+        Minimum segment length in seconds.
     """
 
     DTYPE = np.float32
     """Audio sample data type"""
 
-    def __init__(self, fs: float = DEFAULT_FS, name: str = ""):
+    def __init__(
+        self,
+        fs: float = DEFAULT_FS,
+        name: str = "",
+        min_segment_secs: float = MIN_SEGMENT_SECS,
+        max_segment_secs: float = MAX_SEGMENT_SECS,
+    ):
         """Initialize audio
 
         Parameters
         ----------
         fs : float
             Sampling frequency in Hz.
-        md : Metadata
-            Audio metadata.
+        name : str
+            Name of the audio.
+        min_segment_secs : float
+            Minimum segment length in seconds.
+        max_segment_secs : float
+            Maximum segment length in seconds.
+
+        Attributes
+        ----------
+        fs : float
+            Sampling frequency in Hz.
+        samples : np.ndarray
+            Audio signal samples.
         name : str
             Name of the audio.
         segment : Segment
             Selected audio segment.
-        segment_index : int
-            Index of the selected segment.
         segments : Segments
             Segments of audio.
-        stack : list[Segment]
-            Stack of audio segments.
+        md : Metadata
+            Audio metadata.
+        sf : soundfile.SoundFile
+            Soundfile object for reading audio.
+        stream : sounddevice.InputStream
+            Sounddevice stream for reading audio.
+        min_segment_secs : float
+            Minimum segment length in seconds.
+        next_id : int
+            Next segment identifier.
         """
         self.fs = fs
-        self.samples: np.ndarray = np.ndarray(shape=1, dtype=self.DTYPE)
         self.name: str = name
-        self.segment: Segment = Segment(self.fs)
-        self.segments: Segments = Segments()
+        self.min_segment_secs: float = min_segment_secs
+        self.max_segment_secs: float = max_segment_secs
+
+        self.blocksize = round(fs * DEFAULT_BLOCKSIZE_SECS)
+        self.segment = Segment(fs)
+        self.samples: np.ndarray = np.ndarray(shape=1, dtype=self.DTYPE)
+        self.n_samples_removed: int = 0
+        self.segments = Segments()
         self.md = Metadata(self.name, self.segment)
-        self.eof = False
+        self.sf = None
+        self.stream = None
+        self.next_id: int = 0
+
+    @property
+    def eof(self) -> bool:
+        """Return True if the audio source has been exhausted or is closed."""
+        if self.sf is not None and not self.sf.closed:
+            return self.sf.tell() >= len(self.sf)
+        if self.stream is not None and self.stream.active:
+            return True
+        return True
 
     @property
     def fs(self) -> float:
@@ -173,17 +231,29 @@ class Audio:
 
     def __iter__(self):
         """Return an iterator over the audio segments."""
-        self.segments = self.get_segments(categorize=True)
+        self.segments = self.get_segments()
         return self
 
     def __next__(self):
         """Select and return the next audio segment in the iteration."""
-        if len(self.segments) == 0:
+        # Stop if no segments have been found
+        if not self.segments:
             raise StopIteration
 
+        # Mark the next segment as complete if we are at EOF or the segment
+        # exceeds maximum length
+        if self.eof or (
+            self.max_segment_secs > 0 and self.segments[0].secs >= self.max_segment_secs
+        ):
+            self.segments[0].complete = True
+
+        # Stop iteration if the next segment is incomplete
+        if not self.segments[0].complete:
+            raise StopIteration
+
+        # The next segment is complete: pop, select, and return it
         segment = self.segments.pop(0)
         self.select(segment)
-
         return segment
 
     @property
@@ -230,11 +300,63 @@ class Audio:
         freq = tones[0].freq if tones else 0.0
         return freq
 
+    @property
     def num_channels(self) -> int:
         """Return the number of channels in the audio data."""
         if self.samples.ndim == 1:
             return 1
         return self.samples.shape[1]
+
+    def validate(self, segment: Segment) -> None:
+        # Raise ValueError if segment is incompatible with audio or otherwise
+        # invalid
+        if segment.fs != self.fs:
+            raise ValueError("Segment fs must match audio fs")
+        if segment.start < 0:
+            raise ValueError("Segment start must be non-negative")
+        if segment.stop > len(self.samples) + 1:
+            raise ValueError("Segment stop must not be greater than audio length + 1")
+        if segment.stop <= segment.start:
+            raise ValueError("Segment stop must be greater than start")
+
+    def remove(self, segment: Segment, remove_prior: bool = False) -> None:
+        """Remove the specified segment from the audio.
+
+        Parameters
+        ----------
+        segment : Segment
+            The segment to remove.
+        remove_prior : bool
+            If True, also remove the audio prior to the segment.
+        """
+        # Validate the segment and set convenience variables
+        self.validate(segment)
+        start = segment.start
+        stop = segment.stop
+
+        # Remove the segment from the audio
+        if remove_prior:
+            self.samples = self.samples[stop:]
+        else:
+            self.samples = np.concatenate((self.samples[:start], self.samples[stop:]))
+
+        # Update the start and stop indices of all segments after the segment
+        self.n_samples_removed += stop - start
+
+        offset = stop - start
+        for s in self.segments:
+            if s.start >= stop:
+                s.offset(offset)
+
+            elif s.stop > stop:
+                # Handle simplified case where s might overlap end
+                s.stop -= offset
+
+        # Remove the segment from the list
+        try:
+            self.segments.remove(segment)
+        except ValueError:
+            pass
 
     def select(self, segment: Segment | None = None) -> Segment:
         """
@@ -253,19 +375,12 @@ class Audio:
         # Save the previous segment
         prev_segment = self.segment
 
-        # If no segment is specified, select the entire audio below
+        # If no segment is specified, select the entire audio below. Otherwise,
+        # validate the segment.
         if segment is None:
             segment = Segment(self.fs, 0, len(self.samples))
-
-        # Raise ValueError if segment is incompatible with audio or invalid
-        if segment.fs != self.fs:
-            raise ValueError("Segment fs must match audio fs")
-        if segment.start < 0:
-            raise ValueError("Segment start must be non-negative")
-        if segment.stop > len(self.samples) + 1:
-            raise ValueError("Segment stop must not be greater than audio length + 1")
-        if segment.stop <= segment.start:
-            raise ValueError("Segment stop must be greater than start")
+        else:
+            self.validate(segment)
 
         # Select the segment and update metadata
         self.segment = segment
@@ -302,11 +417,8 @@ class Audio:
 
     def get_segments(
         self,
-        start_sample: int = 0,
-        silence_thresh_ratio: float = 1e-3,
-        min_silence_secs: float = 0.1,
-        silence: bool = False,
-        categorize: bool = False,
+        silence_thresh_ratio: float | None = None,
+        min_silence_secs: float | None = None,
     ) -> Segments:
         """
         Get a list of audio segments whose absolute amplitude is above
@@ -315,107 +427,168 @@ class Audio:
 
         Parameters
         ----------
-        silence_thresh_ratio : float
+        silence_thresh_ratio : float | None
             Ratio of peak amplitude to use as threshold for segment detection.
-        min_silence_secs : float
+        min_silence_secs : float | None
             Minimum duration in seconds for a segment to be included.
-        silence : bool
-            If True, return segments where the signal is below the threshold.
-            Otherwise, return segments where the signal is above the threshold.
         """
+        # Set default values if needed
+        if silence_thresh_ratio is None:
+            silence_thresh_ratio = SILENCE_THRESH_RATIO
+        if min_silence_secs is None:
+            min_silence_secs = SILENCE_MIN_SECS
 
-        # Get number of samples for signal gap detection. Return an empty
-        # list if the audio is empty or the gap size is zero or less.
-        min_silence_secs_n = min_silence_secs * self.fs
-        a = np.asarray(self.samples[start_sample:])
-        n = a.size // a.ndim
-        if n == 0 or min_silence_secs_n <= 0:
+        # Convert min_silence_secs to samples
+        min_silence_n = round(min_silence_secs * self.fs)
+        if min_silence_n <= 0:
+            raise ValueError("Invalid audio or min_silence_secs")
+
+        # Handle incremental updates
+        start_sample = 0
+        if self.segments:
+            last_seg = self.segments.pop()
+            self.next_id = last_seg.id
+            start_sample = last_seg.start
+
+        # Get the samples from the start sample to the end
+        samples = np.asarray(self.samples[start_sample:])
+
+        # Convert to mono
+        if samples.ndim > 1:
+            samples = np.mean(samples, axis=1)
+
+        # Return if there are no amplitudes
+        if not len(samples):
             return Segments()
 
-        # Convert audio to mono for subsequent processing
-        if a.ndim > 1:
-            a = np.mean(a, axis=1)
+        # Get amplitudes of samples
+        amplitudes = np.abs(samples)
 
-        # Get the absolute value of audio
-        a = np.abs(a)
+        # Calculate silence threshold
+        peak = float(max(np.max(amplitudes), MIN_SILENCE_PEAK))
+        thresh = peak * float(SILENCE_THRESH_RATIO)
 
-        # Smooth the absolute audio using a moving average filter
-        window_size = int(self.fs * 0.01)  # 10 ms window
-        window = np.ones(window_size) / window_size
-        a = np.convolve(a, window, mode="same")
+        # Detect segments from raw audio
+        segments = self._detect_segments(
+            start_sample, amplitudes, thresh, min_silence_secs
+        )
+        if not segments:
+            return self.segments
 
-        # Find silent segments where amplitude is below threshold
-        silent_segments = Segments()
+        # Refine bounds and mark completed segments
+        self._refine_segment_bounds(
+            segments, start_sample, amplitudes, thresh, min_silence_n
+        )
 
-        # Determine peak amplitude
-        peak = float(np.max(a))
-        if peak == 0.0:
-            # Entire signal is zero -> single segment spanning whole array if
-            # nsamples satisfied
-            silent_segments.append(Segment(self.fs, 0, n, Category.Silence))
-            return silent_segments
+        # Merge new segments with existing segments
+        segments = Segments([s for s in segments if s.cat != Category.Silence])
+        self.segments.merge(segments)
 
-        # Calculate threshold
-        thresh = peak * float(silence_thresh_ratio)
+        # Remove short segments
+        if self.min_segment_secs > 0:
+            self.segments = Segments(
+                [s for s in self.segments if s.secs >= self.min_segment_secs]
+            )
 
-        # Create boolean array where condition is true (below threshold)
-        below = a <= thresh
+        # Assign IDs to segments
+        self.next_id = self.segments.assign_ids(self.next_id)
 
-        # Find run starts and ends.
-        # Diff will be 1 where False->True (start), -1 where True->False (end)
-        d = np.diff(below.astype(np.int8))
-        starts = np.where(d == 1)[0] + 1
-        ends = np.where(d == -1)[0] + 1
+        # Validate all segments
+        for segment in self.segments:
+            self.validate(segment)
 
-        # Handle case where run starts at index 0
-        if below[0]:
-            starts = np.concatenate(([0], starts))
-        # Handle case where run continues to end
-        if below[-1]:
-            ends = np.concatenate((ends, [n]))
+        return self.segments
 
-        # Add each segment which has sufficient length to segments
-        pairs = [(int(p[0]), int(p[1])) for p in zip(starts, ends)]
-        for s, e in pairs:
-            if (e - s) >= min_silence_secs_n:
-                silent_segments.append(
-                    Segment(self.fs, s, e, len(silent_segments), Category.Silence)
-                )
-
-        # if silence is True, return the segments that have been found
-        if silence:
-            return silent_segments
-
-        # Otherwise, calculate the non-silent segments between the silent ones
-        start = 0
+    def _detect_segments(
+        self,
+        start_sample: int,
+        amplitudes: np.ndarray,
+        thresh: float,
+        min_silence_secs: float,
+    ) -> Segments:
+        """Detect segment boundaries using amplitude threshold."""
+        # Detect segments using short windows
         segments = Segments()
-        if silent_segments:
-            for segment in silent_segments:
-                if segment.start - start >= min_silence_secs_n:
-                    segments.append(
-                        Segment(self.fs, start, segment.start, len(segments))
-                    )
-                start = segment.stop + 1
-        else:
-            # No silent segments found: return entire audio as a single segment
-            segments.append(Segment(self.fs, 0, n))
+        start_secs = self.n_samples_removed / self.fs
+        step = max(1, int(self.fs * SILENCE_WINDOW_SECS))
 
-        # Categorize the non-silent segments if specified
-        if categorize:
-            for segment in segments:
-                old_segment = self.select(segment)
-                segment.cat = self.get_category()
-                self.select(old_segment)
+        # Categorize segments
+        n = len(amplitudes)
+        for i in range(0, n, step):
+            stop = min(i + step, n)
+            max_amp = np.max(amplitudes[i:stop])
+            cat = Category.Unknown if max_amp >= thresh else Category.Silence
+            seg = Segment(
+                self.fs,
+                start_sample + i,
+                start_sample + stop,
+                cat=cat,
+                start_secs=start_secs,
+                complete=False,
+            )
+            segments.append(seg)
 
-        # Adjust start and stop to be relative to the start of the audio
-        for segment in segments:
-            segment.start += start_sample
-            segment.stop += start_sample
+        # Combine same-category segments
+        segments.combine()
+
+        # Recategorize short silence as Unknown
+        for seg in segments:
+            if seg.cat == Category.Silence and seg.secs < min_silence_secs:
+                seg.cat = Category.Unknown
+
+        # Combine segments again to merge recategorized segments
+        segments.combine()
+
+        # Mark Unknown segments which are followed by Silence as complete
+        for i in range(len(segments) - 1):
+            if (
+                segments[i].cat != Category.Silence
+                and segments[i + 1].cat == Category.Silence
+            ):
+                segments[i].complete = True
 
         return segments
 
+    def _refine_segment_bounds(
+        self,
+        segments: Segments,
+        start_sample: int,
+        amplitudes: np.ndarray,
+        thresh: float,
+        min_silence_n: int,
+    ) -> None:
+        """Refine segment boundaries to active samples with padding."""
+        pad = round(self.fs * 0.001)  # 1 ms padding
+
+        # Refine segment boundaries
+        for seg in segments:
+            # Skip silence segments and segments which precede start sample
+            if seg.cat == Category.Silence or seg.start < start_sample:
+                continue
+
+            # Get segment samples
+            seg_a = amplitudes[seg.start - start_sample : seg.stop - start_sample]
+
+            # Find active samples
+            active = np.where(seg_a >= thresh)[0]
+            if active.size > 0:
+                first = int(max(0, active[0] - pad))
+                last = int(min(len(seg_a) - 1, active[-1] + pad))
+                seg.start = seg.start - first
+                seg.stop = seg.start + last + 1
+
+            # Mark segment as complete if it is followed by silence or EOF
+            if seg.stop < len(self.samples) - min_silence_n or self.eof:
+                seg.complete = True
+
     def get_bins(self, channel: Channel = Channel.Mean) -> FreqBins:
-        """Return the frequency bins of the selected audio."""
+        """Return the frequency bins of the selected audio.
+
+        Parameters
+        ----------
+        channel : Channel
+            Channel for which to compute bins (default is Channel.Mean).
+        """
         bins = FreqBins(self.selected_samples, self.md, channel)
         return bins
 
@@ -465,11 +638,16 @@ class Audio:
         if len(freqs) >= 4:
             freqs = freqs[1:-1]
 
+        # Filter out very low frequencies which might be noise
+        valid_freqs = [f for f in freqs if f > 0.5 * MIN_FREQ]
+
         # If all subsegments have increasing or decreasing frequencies it
-        # likely is a sweep.
-        if len(freqs) >= 2:
-            diffs = np.diff(freqs)
-            if np.all(diffs >= 0) or np.all(diffs <= 0):
+        # is a sweep.
+        if len(valid_freqs) >= 2:
+            diffs = np.diff(valid_freqs)
+            # Check for strict monotonicity: not just >= 0, but > 0 to avoid
+            # constant freq
+            if np.all(diffs > 0) or np.all(diffs < 0):
                 return True
 
         # Sweep not detected
@@ -479,10 +657,15 @@ class Audio:
         """
         Determine the category of the selected audio.
 
+        Parameters
+        ----------
+        secs : float
+            Duration in seconds for sweep detection. Default is 0.1 seconds.
+
         Returns
         -------
         Category
-            The audio category: Tone, Sweep, Noise, or Unknown.
+            The audio category: Silence, Tone, Sweep, Noise, or Unknown.
         """
         # Check for silence
         if self.is_silence():
@@ -491,13 +674,13 @@ class Audio:
         # Get frequency bins
         bins = self.get_bins()
 
+        # Check for sweep (before checking for sine)
+        if self.is_sweep(secs=secs):
+            return Category.Sweep
+
         # Check for sine
         if bins.is_sine():
             return Category.Tone
-
-        # Check for sweep
-        if self.is_sweep(secs=secs):
-            return Category.Sweep
 
         # Check for noise
         if bins.is_noise():
@@ -519,6 +702,8 @@ class Audio:
         secs : float
             Duration in seconds of each segment over which the average
             absolute amplitude is calculated.
+        max_noise_db : float
+            Maximum noise level in dBFS.
 
         Returns
         -------
@@ -544,6 +729,7 @@ class Audio:
             avg = np.mean(segment)
             averages = np.append(averages, avg)
 
+        # Return zero if no averages were calculated
         if averages.size == 0:
             return (0.0, 0)
 
@@ -552,6 +738,7 @@ class Audio:
         if dbv(noise_floor) > max_noise_db:
             return (0.0, 0)
 
+        # Return the noise floor and the index at which it was found
         index = int(np.where(averages == noise_floor)[0][0] * avg_size)
         return (noise_floor, index)
 
@@ -576,9 +763,13 @@ class Audio:
             with sf.SoundFile(fname) as f:
 
                 self.__init__(fs=f.samplerate, name=f.name)
+                self.sf = f
 
                 while self.read_block(f):
                     pass
+
+                # Cleanup reference before checking length to maintain consistency
+                self.sf = None
 
                 if not len(self):
                     return False
@@ -606,32 +797,127 @@ class Audio:
         bool
             True if successful.
         """
+        # Ensure Path objects are converted to strings for soundfile
+        if isinstance(fname, Path):
+            fname = str(fname)
+
+        # Open the file
         self.sf = sf.SoundFile(fname)
         self.fs = self.sf.samplerate
         self.name = self.sf.name
+        self.next_id = 0
+
+    def open_device(
+        self,
+        device: int | str | None = None,
+        fs: float | None = None,
+        blocksize: int | None = None,
+        channels: int = 1,
+        dtype: str = "float32",
+    ) -> None:
+        """
+        Open an audio device for input.
+
+        Parameters
+        ----------
+        device : int | str | None
+            Device ID or substring of device name.
+        fs : float | None
+            Sampling frequency in Hz.
+        blocksize : int | None
+            Number of frames per block.
+        channels : int
+            Number of input channels.
+        dtype : str
+            Data type of the audio samples.
+        """
+        if fs is not None:
+            self.fs = fs
+
+        if blocksize is not None:
+            self.blocksize = blocksize
+
+        # Open the input stream
+        self.stream = sd.InputStream(
+            device=device,
+            samplerate=self.fs,
+            blocksize=self.blocksize,
+            channels=channels,
+            dtype=dtype,
+        )
+        self.stream.start()
+        self.next_id = 0
+
+    def close(self) -> None:
+        """Close the audio file or device stream."""
+        if self.sf is not None and not self.sf.closed:
+            self.sf.close()
+            self.sf = None
+
+        if self.stream is not None and self.stream.active:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+
+        # Mark all segments as complete
+        for segment in self.segments:
+            segment.complete = True
+
+    @property
+    def is_open(self) -> bool:
+        """Return True if the audio file or device stream is open."""
+        return (self.sf is not None and not self.sf.closed) or (
+            self.stream is not None and self.stream.active
+        )
 
     def read_block(self, f=None) -> bool:
         """
-        Read a block of audio data from an open file.
+        Read a block of audio data from an open file or device.
 
         Parameters
         ----------
         f : sf.SoundFile | None
-            Open sound file to read from. If None, use self.sf.
+            Open sound file to read from. If None, use self.sf or self.stream.
 
         Returns
         -------
         bool
             True if data was read, False if EOF.
         """
+        data = []
+
+        # Use the provided file or the internal sound file if available
         if f is None:
             f = self.sf
 
-        data = f.read(self.blocksize, dtype="float32", always_2d=False)
-        if len(data) == 0:
+        # Check for open file
+        if f is not None and not f.closed:
+            # Read a block of audio data from file
+            data = f.read(self.blocksize, dtype="float32", always_2d=False)
+
+        # Check for open stream
+        elif self.stream is not None and self.stream.active:
+            # Read a block of audio data from stream
+            data, overflowed = self.stream.read(self.blocksize)
+            if overflowed:
+                print("Audio input overflowed")
+
+            # Reduce to 1D if single channel
+            if self.stream.channels == 1:
+                data = data.flatten()
+
+        # Return False if nothing is open
+        else:
             return False
 
-        self.append(data)
+        # Append the read data to the samples
+        if len(data) > 0:
+            self.append(data)
+            self.get_segments()
+
+        # Return False if no data was read
+        if len(data) == 0:
+            return False
 
         return True
 
@@ -642,7 +928,7 @@ class Audio:
         Parameters
         ----------
         fname : str | Path
-            File name to write.
+            File pathname to write.
 
         Returns
         -------
@@ -670,7 +956,7 @@ class Audio:
         if p.parent and not p.parent.exists():
             p.parent.mkdir(parents=True, exist_ok=True)
         try:
-            sf.write(fname, data, int(self.fs))
+            sf.write(fname, data, int(self.fs), subtype="FLOAT")
             self.md.pathname = fname
             return True
         except Exception:
@@ -694,6 +980,7 @@ class Audio:
                 print(f"  Description: {self.md.desc}")
             print()
 
+        # Print noise floor if requested
         if noise_floor:
             nf, index = self.get_noise_floor()
             secs = index / self.fs

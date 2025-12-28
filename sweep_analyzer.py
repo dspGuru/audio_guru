@@ -6,7 +6,7 @@ from scipy import signal
 from analyzer import Analyzer
 from audio import Audio
 from component import Component, Components
-from constants import EQ_BANDS, MIN_AUDIO_LEN, MIN_PWR
+from constants import EQ_BANDS, MIN_PWR, REF_FREQ
 from freq_resp import FreqResp
 from segment import Segment
 from util import Category
@@ -26,7 +26,17 @@ class SweepAnalyzer(Analyzer):
             Frequency components identified in the audio.
     """
 
-    def __init__(self, audio: Audio, ref_freq: float = 1000.0):
+    def __init__(self, audio: Audio, ref_freq: float = REF_FREQ):
+        """
+        Initialize the sweep analyzer.
+
+        Parameters
+        ----------
+        audio : Audio
+            Audio data to analyze.
+        ref_freq : float
+            Reference frequency for normalization (default REF_FREQ).
+        """
         super().__init__(audio)
         self.ref_freq: float = ref_freq
 
@@ -50,9 +60,6 @@ class SweepAnalyzer(Analyzer):
 
         # Collect samples and sample rate from the Audio object
         samples = self.audio.selected_samples
-
-        if len(samples) < MIN_AUDIO_LEN:
-            raise RuntimeError("Not enough audio samples found for analysis.")
 
         # Ensure samples are a numpy array
         samples = np.asarray(samples)
@@ -115,7 +122,16 @@ class SweepAnalyzer(Analyzer):
         Frequency bands as Components
         """
         super().analyze(segment)
+
+        # If no components were found, create a dummy component to allow
+        # FreqResp to be created
+        if not self.components:
+            c = Component(freq=0.0, pwr=MIN_PWR, secs=0.0, cat=Category.Unknown)
+            self.components.append(c)
+
         self.analysis = FreqResp(self.components)
+        self.analysis.name = "Sweep Frequency Response"
+
         return self.analysis
 
     def get_bands(self, centers=EQ_BANDS, ref_freq: float | None = None) -> Components:
@@ -155,7 +171,6 @@ class SweepAnalyzer(Analyzer):
             print()
 
         # Print the frequency response
-        freq_resp = self.analyze()
         print("\nSweep Frequency Response")
-        print(freq_resp.summary())
+        print(self.analysis.summary())
         print()

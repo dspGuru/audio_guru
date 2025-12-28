@@ -5,6 +5,7 @@ from unittest.mock import patch
 from audio import Audio
 from segment import Segment
 from util import Category
+from constants import DEFAULT_FS, DEFAULT_FREQ
 import generate
 
 
@@ -37,9 +38,10 @@ def test_selected_samples():
 
 
 def test_audio_iteration():
-    a = Audio(fs=1000)
+    a = Audio(fs=1000, min_segment_secs=0.0)
     # Ensure audio has enough samples for the segments
     a.samples = np.zeros(20, dtype=a.DTYPE)
+    # a.eof = True  # Mark as complete for iteration logic (Implicit with new property)
 
     # Manually set segments
     seg1 = Segment(fs=1000, start=0, stop=10, id=1, cat=Category.Tone)
@@ -75,9 +77,9 @@ def test_audio_iteration():
 
 
 def test_inplace_addition():
-    fs = 44100
-    a1 = generate.sine(freq=1000, secs=0.1, amp=0.5, fs=fs)
-    a2 = generate.sine(freq=1000, secs=0.1, amp=0.2, fs=fs)
+    fs = DEFAULT_FS
+    a1 = generate.sine(freq=DEFAULT_FREQ, secs=0.1, amp=0.5, fs=fs)
+    a2 = generate.sine(freq=DEFAULT_FREQ, secs=0.1, amp=0.2, fs=fs)
 
     original_len = len(a1)
 
@@ -180,8 +182,9 @@ def test_get_segments_edge_cases():
     # Audio with gap size issue (min_silence_secs resulting in <= 0 samples?)
     a.samples = np.zeros(100, dtype=a.DTYPE)
     # If we request min_silence_secs that is very small or negative?
-    segs = a.get_segments(min_silence_secs=-1.0)
-    assert len(segs) == 0
+    # If we request min_silence_secs that is very small or negative?
+    with pytest.raises(ValueError, match="Invalid audio or min_silence_secs"):
+        a.get_segments(min_silence_secs=-1.0)
 
 
 def test_print_conditions(capsys):

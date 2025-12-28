@@ -6,19 +6,24 @@ __all__ = [
     "DEFAULT_AMP",
     "DEFAULT_FREQ",
     "DEFAULT_FS",
+    "EQ_BANDS",
+    "MAX_BINS_PER_TONE",
+    "MAX_TONES",
     "MIN_DB",
     "MIN_PWR",
-    "MIN_AUDIO_LEN",
-    "BINS_PER_TONE",
-    "MAX_TONES",
-    "EQ_BANDS",
+    "MIN_SEGMENT_SECS",
     "STD_BANDS",
 ]
 
-DEFAULT_AMP: float = 0.6
+
+# -----------------------------------------------------------------------------
+# Audio Generation and Defaults
+# -----------------------------------------------------------------------------
+
+DEFAULT_AMP: float = 0.5
 """Default amplitude for generated audio."""
 
-DEFAULT_BLOCKSIZE_SECS: float = 10.0
+DEFAULT_BLOCKSIZE_SECS: float = 5.0
 """Default audio sample block size in seconds."""
 
 DEFAULT_FREQ: float = 1000.0
@@ -27,24 +32,16 @@ DEFAULT_FREQ: float = 1000.0
 DEFAULT_FS = 44100.0
 """Default sampling frequency in Hz."""
 
-DEFAULT_MAX_NF_DBFS = -60.0
-"""Default maximum allowable noise floor in dBFS."""
+DEFAULT_GEN_SECS = 5.0
+"""Default duration for generated audio in seconds."""
 
-MIN_PWR = 1e-12  # -120 dB
-"""Minimum power value for audio measurements."""
+DEFAULT_GEN_SILENCE_SECS = 0.0
+"""Default duration of silence in seconds."""
 
-MIN_DB = 10.0 * math.log10(MIN_PWR)
-"""Minimum decibel value for audio measurements."""
 
-MIN_AUDIO_LEN = 256
-"""Minimum audio length to analyze in samples."""
-
-BINS_PER_TONE = 5
-"""Number of frequency bins which constitute a single component after
-applying Blackman-Harris window (empirical)"""
-
-MAX_TONES = 20
-"""Maximum number of tones to identify"""
+# -----------------------------------------------------------------------------
+# Frequency Analysis
+# -----------------------------------------------------------------------------
 
 MIN_FREQ = 20.0
 """Minimum frequency for audio analysis in Hz."""
@@ -96,3 +93,68 @@ STD_BANDS = (
     20000.0,
 )
 """Standard one-third octave band center frequencies per ISO 266."""
+
+
+# -----------------------------------------------------------------------------
+# Segmentation and Silence Detection
+# -----------------------------------------------------------------------------
+
+MIN_SEGMENT_SECS = 1.0
+"""Minimum audio segment length to analyze in seconds."""
+
+MAX_SEGMENT_SECS = 60.0
+"""Maximum audio segment length to analyze in seconds."""
+
+DEFAULT_MAX_ANALYSIS_SECS = 30.0
+"""Default maximum duration of audio to analyze in seconds."""
+
+SILENCE_THRESH_RATIO = 0.1
+"""Ratio of peak amplitude to threshold for silence detection."""
+
+SILENCE_MIN_SECS = 0.5
+"""Minimum duration of silence in seconds."""
+
+SILENCE_WINDOW_SECS = SILENCE_MIN_SECS / 10.0
+"""Duration of silence window in seconds."""
+
+MIN_SILENCE_PEAK = 1e-6
+"""Minimum peak amplitude for silence detection."""
+
+
+# -----------------------------------------------------------------------------
+# Analysis Thresholds and Limits
+# -----------------------------------------------------------------------------
+
+MIN_PWR = 1e-12  # -120 dB
+"""Minimum power value for audio measurements."""
+
+MIN_DB = 10.0 * math.log10(MIN_PWR)
+"""Minimum decibel value for audio measurements (corresponds to MIN_PWR)."""
+
+DEFAULT_MAX_NF_DBFS = -60.0
+"""Default maximum allowable noise floor in dBFS."""
+
+MAX_BINS_PER_TONE = 25
+"""Number of frequency bins which constitute a single component after
+applying seven-term Blackman-Harris window (empirical)"""
+
+MAX_TONES = 20
+"""Maximum number of tones to identify"""
+
+
+# -----------------------------------------------------------------------------
+# Tone Analysis
+# -----------------------------------------------------------------------------
+
+MAX_DIST_ORDER = 3
+"""Maximum distortion order to consider"""
+
+MAX_HARM_ORDER = 5
+"""Maximum harmonic order to consider"""
+
+MIN_SPUR_RATIO = 1e-8
+"""Threshold for distinguishing spurs from noise (-80 dB)"""
+
+MIN_TWO_TONE_RATIO = 1e-2
+"""Minimum ratio for two-tone detection (-20 dB). Second tone must be at
+least this large relative to the first tone."""

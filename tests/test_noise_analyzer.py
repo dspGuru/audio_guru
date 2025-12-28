@@ -24,7 +24,8 @@ def test_noise_analyzer_with_example_file(examples_dir):
     # Initialize analyzer
     analyzer = NoiseAnalyzer(audio)
     assert analyzer.audio is audio
-    bands = analyzer.analyze()
+    analysis = analyzer.analyze()
+    bands = analysis.bands
 
     # Test get_components()
     comps = analyzer.get_components()
@@ -58,7 +59,8 @@ def test_noise_analyzer_with_filtered_noise():
     assert len(comps) > 0
 
     # Test analyze (returns bands on EQ centers)
-    bands = analyzer.analyze()
+    analysis = analyzer.analyze()
+    bands = analysis.bands
     assert len(bands) > 0
     assert bands.name == "Noise Bands"
 
@@ -99,3 +101,62 @@ def test_reset():
     analyzer.components = [1, 2, 3]  # Mock
     analyzer.reset()
     assert analyzer.components is None or len(analyzer.components) == 0
+
+
+def test_filtered_noise_response():
+    """Verify that a filtered noise matches the expected bandpass filter response."""
+    # Generate filtered noise exactly as in generate.py
+    # Filter is 4th order Butterworth bandpass from 300Hz to 3000Hz
+    import scipy.signal as scipy_signal
+
+    fs = 48000
+    secs = 2.0
+    audio = noise(secs=secs, fs=fs)
+
+    sos = scipy_signal.butter(4, [300, 3000], btype="bandpass", fs=fs, output="sos")
+    audio.samples = scipy_signal.sosfilt(sos, audio.samples).astype(audio.DTYPE)
+
+    analyzer = NoiseAnalyzer(audio)
+    analysis = analyzer.analyze()  # Returns bands on ISO/EQ centers
+    bands = analysis.bands
+
+    # We expect high power in passband (300 Hz-3 kHz)
+    # We expect low power in stopbands (<300 Hz, >3 kHz)
+
+    # Identify passband bands
+    passband_centers = [
+        f for f in [315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500]
+    ]
+    stopband_low_centers = [f for f in [63, 125]]
+    stopband_high_centers = [f for f in [4000, 8000, 16000]]
+
+    # Helper to get average power of a list of bands
+    def get_avg_pwr(centers):
+        pwrs = []
+        for c in centers:
+            band = bands.find_freq(c)
+            if band:
+                pwrs.append(band.pwr)
+        return sum(pwrs) / len(pwrs) if pwrs else 0.0
+
+    pass_pwr = get_avg_pwr(passband_centers)
+    stop_low_pwr = get_avg_pwr(stopband_low_centers)
+    stop_high_pwr = get_avg_pwr(stopband_high_centers)
+
+    assert pass_pwr > 0
+
+    # Check signal-to-noise ratio between passband and stopbands
+    # We expect significant attenuation.
+    # With white noise, power is distributed. Filter removes outside power.
+    # In dB:
+    pass_db = db(pass_pwr)
+    stop_low_db = db(stop_low_pwr)
+    stop_high_db = db(stop_high_pwr)
+
+    # Expect > 12 dB difference typically for 4th order
+    assert (
+        pass_db - stop_low_db
+    ) > 12.0, f"Expected > 12 dB attenuation low, got {pass_db - stop_low_db:.1f} dB"
+    assert (
+        pass_db - stop_high_db
+    ) > 12.0, f"Expected > 12 dB attenuation high, got {pass_db - stop_high_db:.1f} dB"

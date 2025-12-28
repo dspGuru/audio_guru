@@ -73,6 +73,16 @@ class Metadata:
     """
 
     def __init__(self, pathname: str, segment: Segment):
+        """
+        Initialize metadata.
+
+        Parameters
+        ----------
+        pathname : str
+            File pathname.
+        segment : Segment
+            Audio segment associated with the metadata.
+        """
         self.pathname: str = pathname
         self.segment: Segment = segment
 

@@ -2,7 +2,14 @@
 
 from analyzer import Analyzer
 from component import Component, Components
-from constants import BINS_PER_TONE, MAX_TONES, MIN_AUDIO_LEN
+from constants import (
+    MAX_BINS_PER_TONE,
+    MAX_TONES,
+    MAX_DIST_ORDER,
+    MAX_HARM_ORDER,
+    MIN_SPUR_RATIO,
+    MIN_TWO_TONE_RATIO,
+)
 from segment import Segment
 from tone_stats import ToneStats
 from util import Category, alias_freq, is_harmonic
@@ -30,22 +37,7 @@ class ToneAnalyzer(Analyzer):
             All identified components in the audio signal.
     """
 
-    """Static Constants"""
-
-    MAX_DIST_ORDER = 3
-    """Maximum distortion order to consider"""
-
-    MAX_HARM_ORDER = 5
-    """Maximum harmonic order to consider"""
-
-    MIN_SPUR_RATIO = 1e-8
-    """Threshold for distinguishing spurs from noise (-80 dB)"""
-
-    MIN_TWO_TONE_RATIO = 1e-2
-    """Minimum ratio for two-tone detection (-20 dB). Second tone must be at
-    least this large relative to the first tone."""
-
-    # Note: __init__() is inherited from BaseAnalyzer
+    # Note: __init__() is inherited from super class
 
     # @override
     def reset(self) -> None:
@@ -65,15 +57,9 @@ class ToneAnalyzer(Analyzer):
             Calculated components.
         """
 
-        # Raise ValueError if audio sample is too short to calculate meaningful
-        # statistics
-        if len(self.audio) < MIN_AUDIO_LEN:
-            raise ValueError("Audio sample is too short to analyze")
-
         # Get frequency components from frequency bins
         bins = self.audio.get_bins()
-        components = bins.get_tones(BINS_PER_TONE, MAX_TONES)
-        # TODO?        components.combine(1.0, 1e-4)  # combine components that are within 2 Hz
+        components = bins.get_tones(MAX_TONES)
 
         # Initialize distortion frequency list
         dist_freqs: list[float] = []
@@ -90,48 +76,40 @@ class ToneAnalyzer(Analyzer):
         # is a two-tone signal
         if len(components) > 1:
             harmonic = alias_freq(2.0 * components[0].freq, self.fs)
-            if (components[1].pwr < self.MIN_TWO_TONE_RATIO * components[0].pwr) or (
-                bins.freq_to_bin(abs(components[1].freq - harmonic)) < BINS_PER_TONE
+
+            if (components[1].pwr < MIN_TWO_TONE_RATIO * components[0].pwr) or (
+                bins.freq_to_bin(abs(components[1].freq - harmonic)) < MAX_BINS_PER_TONE
             ):
-                # Second-largest is a small or a harmonic: single tone signal
+                # Second-largest is a small or a harmonic: single-tone signal
                 dist_freqs = [
                     alias_freq(n * self.tone.freq, self.fs) for n in range(10)
                 ]
                 self.tone2 = Component(0.0, 0.0)  # flag as invalid
             else:
-                # Second-largest is a large and not a harmonic: two-tone signal
+                # Second-largest is large and not a harmonic: two-tone signal
                 components[1].cat = Category.Tone
                 self.tone2 = components[1]
                 start = 2
 
-                # Swap tones if tone2 has a lower frequency than the first
-                if self.tone2.freq < self.tone.freq:
-                    (self.tone, self.tone2) = (self.tone2, self.tone)
-
                 # Calculate distortion frequencies for two-tone signal
                 (f1, f2) = (self.tone.freq, self.tone2.freq)
-                for n in range(self.MAX_DIST_ORDER):
-                    for n2 in range(self.MAX_DIST_ORDER):
+                for n in range(MAX_DIST_ORDER):
+                    for n2 in range(MAX_DIST_ORDER):
                         dist_freqs.append(n * f1 + n2 * f2)
                         dist_freqs.append(n * f1 - n2 * f2)
                         dist_freqs.append(-n * f1 + n2 * f2)
 
         # Categorize remaining components
         for comp in components[start:]:
-            if (
-                is_harmonic(comp.freq, self.tone.freq, self.fs, self.MAX_HARM_ORDER)
-            ) or (
-                is_harmonic(comp.freq, self.tone2.freq, self.fs, self.MAX_HARM_ORDER)
+            if (is_harmonic(comp.freq, self.tone.freq, self.fs, MAX_HARM_ORDER)) or (
+                is_harmonic(comp.freq, self.tone2.freq, self.fs, MAX_HARM_ORDER)
             ):
                 comp.cat = Category.Harmonic
-            elif bins.freq_in_list(comp.freq, dist_freqs, BINS_PER_TONE):
+            elif bins.freq_in_list(comp.freq, dist_freqs, MAX_BINS_PER_TONE):
                 comp.cat = Category.Distortion
-            elif comp.pwr > self.tone.pwr * self.MIN_SPUR_RATIO:
+            elif comp.pwr > self.tone.pwr * MIN_SPUR_RATIO:
                 comp.cat = Category.Spurious
-            elif (
-                self.tone2.freq > 0.0
-                and comp.pwr > self.tone2.pwr * self.MIN_SPUR_RATIO
-            ):
+            elif self.tone2.freq > 0.0 and comp.pwr > self.tone2.pwr * MIN_SPUR_RATIO:
                 comp.cat = Category.Spurious
             else:
                 comp.cat = Category.Noise
@@ -141,7 +119,7 @@ class ToneAnalyzer(Analyzer):
         for idx, comp in enumerate(components):
             if comp.cat == Category.Noise:
                 for freq in spur_freqs:
-                    if is_harmonic(comp.freq, freq, self.fs, self.MAX_HARM_ORDER):
+                    if is_harmonic(comp.freq, freq, self.fs, MAX_HARM_ORDER):
                         components[idx].cat = Category.Spurious
 
         components.name = "Tone Components"

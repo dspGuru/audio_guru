@@ -67,8 +67,29 @@ def test_to_dict_and_summary_contents():
     assert "1.2" in summary
     assert "-50.0" in summary
 
-
-def test_empty_components_raises_value_error():
     empty = DummyComponents([], md={})
     with pytest.raises(ValueError):
         FreqResp(empty)
+
+
+def test_str_output():
+    comps = DummyComponents(
+        pwrs=[-50.0],
+        md=SimpleNamespace(segment=SimpleNamespace(desc="Segment X")),
+        ripple_value=0.5,
+        edges=(100.0, 10000.0),
+    )
+    fr = FreqResp(comps)
+    s = str(fr)
+
+    assert "Segment X" in s
+    assert "Lower Edge = 100.0 Hz" in s
+    assert "Upper Edge = 10000.0 Hz" in s
+    assert "Ripple     = 0.5 dB" in s
+    assert "Minimum    = -50.0 dB" in s
+
+
+def test_summary_header():
+    header = FreqResp.summary_header()
+    assert "Frequency Response" in header
+    assert "Lower   Upper" in header

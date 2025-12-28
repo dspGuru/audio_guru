@@ -16,8 +16,9 @@ def test_default_args():
     assert args.pattern == ""
     assert args.components is False
     assert args.write_csv is None
-    assert args.generate is None
-    assert args.max_length == 0.0
+    assert args.write_csv is None
+    assert args.device is False
+    assert args.max_length == 60.0
     assert args.noise_floor is True
     assert args.stats is False
     # Default order set by set_defaults
@@ -33,9 +34,9 @@ def test_default_args():
 
 
 def test_flags():
-    args = run_parser(["-c", "-g", "-s"])
+    args = run_parser(["-c", "-d", "-s"])
     assert args.components is True
-    assert args.generate is True
+    assert args.device is True
     assert args.stats is True
 
 

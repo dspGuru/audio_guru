@@ -159,9 +159,9 @@ class ToneStats(Analysis):
             s = s + f" {self.thd_pct:6.3f} {db_str(self.thd):6} {db_str(self.thdn):6}"
 
         # SFDR, F1, F2
-        s = s + f" {db_str(self.sfdr):6}  {round(self.freq):5.0f}"
+        s = s + f" {db_str(self.sfdr):6}  {self.freq:5.0f}"
         if self.freq2 > 0.0:
-            s = s + f"  {round(self.freq2):5.0f}"
+            s = s + f"  {self.freq2:5.0f}"
         else:
             s = s + "       "
 

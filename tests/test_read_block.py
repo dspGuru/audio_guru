@@ -12,11 +12,15 @@ def test_read_block(tmp_path):
     a_orig = generate.sine(freq=440, secs=1.0, fs=fs)
     a_orig.write(str(fname))
 
+    # Strip silence from a_orig to match read behavior (which strips initial silence)
+    a_orig.get_segments()
+
     # 2. Open with soundfile
     f = sf.SoundFile(str(fname))
 
     # 3. Read in blocks
-    a = Audio(fs=fs)
+    # Set min_segment_secs=0 because blocks are 0.1s and we are testing incremental reading/segmentation
+    a = Audio(fs=fs, min_segment_secs=0.0)
     a.samples = np.array([], dtype=np.float32)
     # Default blocksize is 0.1s -> should get ~10 blocks
     a.blocksize = round(fs * 0.1)
@@ -24,6 +28,8 @@ def test_read_block(tmp_path):
     while a.read_block(f):
         # Check metadata update
         assert a.fs == fs
+        # Verify segments extraction is happening (should be at least 1 segment found/updated)
+        assert len(a.segments) > 0
 
     f.close()
 
@@ -42,6 +48,9 @@ def test_read_block_duck_typing():
     f_mock = Mock()
     f_mock.samplerate = 48000
     f_mock.name = "MockAudioSource"
+    f_mock.closed = False
+    f_mock.__len__ = Mock(return_value=1000)
+    f_mock.tell.return_value = 0
 
     # Setup read to return one block then empty
     fs = 48000

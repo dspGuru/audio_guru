@@ -1,4 +1,5 @@
 from audio_analyzer import AudioAnalyzer
+import unittest.mock
 
 
 class TestAudioAnalyzer:
@@ -26,7 +27,8 @@ class TestAudioAnalyzer:
         fname_str = str(fname)
 
         analyzer = AudioAnalyzer()
-        count = analyzer.read(fname_str)
+        with unittest.mock.patch("analyzer.MIN_SEGMENT_SECS", 0.0):
+            count = analyzer.read(fname_str)
 
         assert count == 1
         assert len(analyzer.unit_ids) == 1
@@ -56,7 +58,8 @@ class TestAudioAnalyzer:
 
         pattern = str(examples_dir / "test_*.wav")
         analyzer = AudioAnalyzer()
-        count = analyzer.read(pattern)
+        with unittest.mock.patch("analyzer.MIN_SEGMENT_SECS", 0.0):
+            count = analyzer.read(pattern)
 
         assert count > 0
         assert len(analyzer.unit_ids) > 0
@@ -73,7 +76,7 @@ class TestAudioAnalyzer:
         # We expect some output
         assert len(captured.out) > 0
         # Usually headers or stats are printed.
-        # "Tone Statistics Summary:" is printed if ToneAnalyzer was used and sort_stat_attr is set
+        # "Tone Statistics Summary:" is printed if ToneAnalyzer was used and sort_attr is set
         # But only if ToneStatsList is not empty.
 
         # If the file is 1k tone, it should produce ToneStats

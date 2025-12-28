@@ -10,8 +10,18 @@ class FreqResp(Analysis):
     """Class to represent a frequency response."""
 
     def __init__(self, components: Components):
+        """
+        Initialize the frequency response.
+
+        Parameters
+        ----------
+        components : Components
+            List of frequency components.
+        """
         super().__init__(components.md)
 
+        if not components:
+            raise ValueError("Components list cannot be empty")
         self.components = components
         self.minimum: float = min([comp.pwr for comp in components])
 

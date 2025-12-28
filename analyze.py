@@ -1,7 +1,5 @@
 """Audio Analyzer."""
 
-import glob
-
 from analyzer_args import get_args
 from audio_analyzer import AudioAnalyzer
 
@@ -10,20 +8,18 @@ def main():
     # Get command-line arguments
     args = get_args()
 
-    # Create analyzer and read files
-    analyzer = AudioAnalyzer()
+    # Create analyzer
+    analyzer = AudioAnalyzer(max_segment_secs=args.max_length)
 
-    num_read = 0
-    fnames: list[str] = glob.glob(args.pattern)
-    for fname in fnames:
-        if not analyzer.read(fname):
-            print(f"Failed to read {fname}")
-            continue
-        num_read += 1
-
-    if num_read == 0:
-        print("No files found.")
-        return
+    # Read from device if specified
+    if args.device:
+        if not analyzer.read_device():
+            print("Failed to read from device")
+            return
+    else:
+        if not analyzer.read(args.pattern):
+            print("No files found.")
+            return
 
     # Print the analysis results
     analyzer.print(

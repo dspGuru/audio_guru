@@ -2,7 +2,7 @@ import pytest
 import unittest.mock
 import numpy as np
 
-from constants import DEFAULT_FS
+from constants import DEFAULT_FS, DEFAULT_FREQ
 from freq_bins import FreqBins
 from metadata import Metadata
 from segment import Segment
@@ -14,7 +14,7 @@ class TestFreqBins:
         # Create a simple sine wave: 1 kHz at 44.1 kHz, 1000 samples
         fs = DEFAULT_FS
         t = np.arange(1000) / fs
-        samples = np.sin(2 * np.pi * 1000.0 * t).astype(np.float32)
+        samples = np.sin(2 * np.pi * DEFAULT_FREQ * t).astype(np.float32)
         md = Metadata("test", Segment(fs, 0, 999))
 
         bins = FreqBins(samples, md, Channel.Mean)
@@ -28,14 +28,14 @@ class TestFreqBins:
         t = np.arange(4096) / fs  # Enough samples for good resolution
 
         # 1 kHz tone
-        samples = 0.5 * np.sin(2 * np.pi * 1000.0 * t).astype(np.float32)
+        samples = 0.5 * np.sin(2 * np.pi * DEFAULT_FREQ * t).astype(np.float32)
         md = Metadata("test", Segment(fs, 0, 4095))
 
         bins = FreqBins(samples, md, Channel.Mean)
         tones = bins.get_tones(max_components=1)
 
         assert len(tones) == 1
-        assert tones[0].freq == pytest.approx(1000.0, abs=fs / len(t))
+        assert tones[0].freq == pytest.approx(DEFAULT_FREQ, abs=fs / len(t))
         # Within bin resolution?
         # Actually FreqBins usually does interpolation or peak finding.
         # Let's hope it's accurate.
@@ -44,7 +44,7 @@ class TestFreqBins:
         # Create a sine wave
         fs = DEFAULT_FS
         t = np.arange(4096) / fs
-        samples = 0.5 * np.sin(2 * np.pi * 1000.0 * t).astype(np.float32)
+        samples = 0.5 * np.sin(2 * np.pi * DEFAULT_FREQ * t).astype(np.float32)
         md = Metadata("test", Segment(fs, 0, 4095))
 
         bins = FreqBins(samples, md)
@@ -64,7 +64,7 @@ class TestFreqBins:
         t = np.arange(1000) / fs
 
         # Create stereo signal: left=1k sine, right=silence
-        left = np.sin(2 * np.pi * 1000.0 * t)
+        left = np.sin(2 * np.pi * DEFAULT_FREQ * t)
         right = np.zeros_like(left)
         stereo = np.column_stack((left, right)).astype(np.float32)
         md = Metadata("test", Segment(fs, 0, 999))
@@ -80,7 +80,7 @@ class TestFreqBins:
 
         # Test Mean
         bins_m = FreqBins(stereo, md, Channel.Mean)
-        assert bins_m.max > 0.005
+        assert bins_m.max > 0.003
         assert bins_m.max < bins_l.max
 
     def test_mean_power(self):

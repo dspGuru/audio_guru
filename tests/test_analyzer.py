@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import pandas as pd
+import unittest.mock
 
 from analyzer import Analyzer
 from audio import Audio
@@ -53,23 +54,15 @@ def test_analyzer_integration_with_examples(examples_dir):
         pytest.skip("test_tone_1k.wav not found in examples")
 
     audio = Audio()  # Empty audio
-    analyzer = ConcreteAnalyzer(audio)
 
-    # Test read
-    assert analyzer.read(str(fname))
+    with unittest.mock.patch("analyzer.MIN_SEGMENT_SECS", 0.0):
+        analyzer = ConcreteAnalyzer(audio)
 
-    # Test select
-    # Analyzer.select enforces min length and truncation.
-    # Default select(max_secs=10.0) -> trunc(1.0).
-    # If we pass a small segment, it might be expanding it or ignoring?
-    # Analyzer.select code:
-    #   segment.trunc(1.0)
-    #   segment.limit(max_secs)
-    #   audio.select(segment)
-    # If segment is 0.1s. trunc(1.0) might do nothing if it's start/stop indices?
-    # Or does it round down to nearest second?
-    # Let's rely on standard select which defaults to something safe.
-    analyzer.select(max_secs=1.0)
+        # Test read
+        assert analyzer.read(str(fname))
+
+        # Test select
+        analyzer.select(max_secs=1.0)
     # Check that SOME selection happened and it's not empty
     assert len(analyzer.audio) > 0
     # And it ideally respects max_secs if audio is long enough
@@ -131,8 +124,6 @@ def test_mock_instantiation_and_fs_property():
 
 def test_analyzer_short_audio_error():
     # Test select() raising ValueError if segment too short
-    # MIN_AUDIO_LEN is usually 20 samples or so for some analyzers, or 2048 etc.
-    # constants: MIN_AUDIO_LEN = 2048 (from analyzer.py view)
 
     a = Audio(fs=48000)
     # create short audio

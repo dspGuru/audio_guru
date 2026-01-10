@@ -25,7 +25,7 @@ def test_analysis_list_summary_empty():
 def test_freq_bins_min_with_data():
     """Test FreqBins.min property with actual data."""
     audio = generate.noise(secs=0.1)
-    bins = audio.get_bins()
+    bins = audio.bins
 
     # Access min property
     min_val = bins.min
@@ -36,7 +36,7 @@ def test_freq_bins_min_with_data():
 def test_freq_bins_mean_method():
     """Test FreqBins.mean() method."""
     audio = generate.noise(secs=0.1)
-    bins = audio.get_bins()
+    bins = audio.bins
 
     # Test mean over frequency range
     mean_pwr = bins.mean(100.0, 1000.0)
@@ -47,7 +47,7 @@ def test_freq_bins_mean_method():
 def test_freq_bins_ripple_method():
     """Test FreqBins.ripple() method."""
     audio = generate.noise(secs=0.1)
-    bins = audio.get_bins()
+    bins = audio.bins
 
     # Test ripple calculation
     ripple = bins.ripple(100.0, 1000.0)
@@ -92,7 +92,8 @@ def test_tone_analyzer_get_second_freq():
     segment = audio.get_segments()[0]
     segment.cat = Category.Tone
 
-    result = analyzer.analyze(segment)
+    analyzer.select(segment)
+    result = analyzer.analyze()
     # Should analyze without error
     assert result is not None
 
@@ -106,7 +107,8 @@ def test_tone_analyzer_harmonics():
     segment = audio.get_segments()[0]
     segment.cat = Category.Tone
 
-    result = analyzer.analyze(segment)
+    analyzer.select(segment)
+    result = analyzer.analyze()
     assert result is not None
 
 

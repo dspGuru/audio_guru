@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """Joins audio files into a single file."""
 
 import argparse

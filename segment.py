@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 
 from constants import DEFAULT_FS
-from util import Category
+from util import Category, Channel
 
 
 class Segment:
@@ -19,8 +19,8 @@ class Segment:
         stop: Stop index
         id: Segment identifier
         cat: Audio category of the segment
-        start_delta: Delta applied to start index to account for audio sample
-         truncation after segment initialization
+        complete: Whether the segment is complete
+        channel: Channel of the segment
 
     Properties
     ----------
@@ -46,6 +46,7 @@ class Segment:
         cat: Category = Category.Unknown,
         start_secs: float = 0.0,
         complete: bool = False,
+        channel: Channel = Channel.Stereo,
     ):
         """
         Initialize the audio segment.
@@ -73,9 +74,25 @@ class Segment:
         self.cat: Category = cat
         self.complete: bool = complete
         self._start_secs: float = start_secs
+        self.channel: Channel = channel
 
     def __len__(self):
         return self.stop - self.start
+
+    def __eq__(self, other: object) -> bool:
+        """Return True if the segments are equal."""
+        if not isinstance(other, Segment):
+            return NotImplemented
+        return (
+            self.fs == other.fs
+            and self.start == other.start
+            and self.stop == other.stop
+            and self.id == other.id
+            and self.cat == other.cat
+            and self.complete == other.complete
+            and self._start_secs == other._start_secs
+            and self.channel == other.channel
+        )
 
     def __str__(self) -> str:
         """Return a string description of the segment."""
@@ -217,9 +234,11 @@ class Segments(list[Segment]):
                 not self[-1].complete
                 and self[-1].stop == segments[0].start
                 and self[-1].cat == segments[0].cat
+                and self[-1].channel == segments[0].channel
             ):
                 self[-1].stop = segments[0].stop
                 self[-1].complete = segments[0].complete
+                self[-1].channel = segments[0].channel
                 segments.pop(0)
 
         self.extend(segments)

@@ -18,11 +18,10 @@ def test_read_block(tmp_path):
     # 2. Open with soundfile
     f = sf.SoundFile(str(fname))
 
-    # 3. Read in blocks
-    # Set min_segment_secs=0 because blocks are 0.1s and we are testing incremental reading/segmentation
+    # Set min_segment_secs=0 for 0.1s blocks
     a = Audio(fs=fs, min_segment_secs=0.0)
     a.samples = np.array([], dtype=np.float32)
-    # Default blocksize is 0.1s -> should get ~10 blocks
+    # Default blocksize 0.1s -> ~10 blocks
     a.blocksize = round(fs * 0.1)
 
     while a.read_block(f):
@@ -36,8 +35,7 @@ def test_read_block(tmp_path):
     # 4. Verify
     assert len(a.samples) > 0
 
-    # Compare with original samples
-    # Original might have slightly different length if write/read adds/removes anything? usually exact for wav.
+    # Compare with original
     assert np.allclose(a.samples, a_orig.samples, atol=1e-4)
 
 
@@ -74,3 +72,32 @@ def test_read_block_duck_typing():
 
     # Second read (EOF)
     assert a.read_block(f_mock) is False
+
+
+def test_read_block_max_samples_assertion():
+    """Test that read_block asserts when samples exceed 2 * SEGMENT_MAX_SECS."""
+    import pytest
+    from constants import SEGMENT_MAX_SECS
+
+    fs = 44100
+    max_samples = int(2 * SEGMENT_MAX_SECS * fs)
+
+    # Create a mock file that returns large blocks of non-silent data
+    f_mock = Mock()
+    f_mock.samplerate = fs
+    f_mock.name = "MockLargeAudio"
+    f_mock.closed = False
+    f_mock.__len__ = Mock(return_value=max_samples * 2)
+    f_mock.tell.return_value = 0
+
+    # Large non-zero block to exceed limit
+    large_block = np.full(max_samples + fs, 0.5, dtype=np.float32)
+
+    f_mock.read.return_value = large_block
+
+    a = Audio(fs=fs)
+    a.blocksize = len(large_block)
+
+    # Should raise AssertionError when samples exceed max
+    with pytest.raises(AssertionError, match="Audio.samples exceeded maximum length"):
+        a.read_block(f_mock)

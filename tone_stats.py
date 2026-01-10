@@ -142,7 +142,7 @@ class ToneStats(Analysis):
     def summary_header() -> str:
         """Return statistics summary header"""
         return (
-            "Tone Statistics:\n"
+            "Tone Statistics\n"
             "Unit                Description          THD%    THD   THDN   SFDR     F1     F2"
         )
 

@@ -10,7 +10,6 @@ from constants import (
     MIN_SPUR_RATIO,
     MIN_TWO_TONE_RATIO,
 )
-from segment import Segment
 from tone_stats import ToneStats
 from util import Category, alias_freq, is_harmonic
 
@@ -58,8 +57,7 @@ class ToneAnalyzer(Analyzer):
         """
 
         # Get frequency components from frequency bins
-        bins = self.audio.get_bins()
-        components = bins.get_tones(MAX_TONES)
+        components = self.audio.bins.tones
 
         # Initialize distortion frequency list
         dist_freqs: list[float] = []
@@ -78,7 +76,8 @@ class ToneAnalyzer(Analyzer):
             harmonic = alias_freq(2.0 * components[0].freq, self.fs)
 
             if (components[1].pwr < MIN_TWO_TONE_RATIO * components[0].pwr) or (
-                bins.freq_to_bin(abs(components[1].freq - harmonic)) < MAX_BINS_PER_TONE
+                self.audio.bins.freq_to_bin(abs(components[1].freq - harmonic))
+                < MAX_BINS_PER_TONE
             ):
                 # Second-largest is a small or a harmonic: single-tone signal
                 dist_freqs = [
@@ -105,7 +104,7 @@ class ToneAnalyzer(Analyzer):
                 is_harmonic(comp.freq, self.tone2.freq, self.fs, MAX_HARM_ORDER)
             ):
                 comp.cat = Category.Harmonic
-            elif bins.freq_in_list(comp.freq, dist_freqs, MAX_BINS_PER_TONE):
+            elif self.audio.bins.freq_in_list(comp.freq, dist_freqs, MAX_BINS_PER_TONE):
                 comp.cat = Category.Distortion
             elif comp.pwr > self.tone.pwr * MIN_SPUR_RATIO:
                 comp.cat = Category.Spurious
@@ -127,14 +126,9 @@ class ToneAnalyzer(Analyzer):
         return components
 
     # @override
-    def analyze(self, segment: Segment | None = None) -> ToneStats:
+    def analyze(self) -> ToneStats:
         """
         Calculate and return statistics from audio analysis.
-
-        Parameters
-        ----------
-        segment : Segment | None
-            Segment of audio to analyze. If None, use the entire audio.
 
         Returns
         -------
@@ -142,8 +136,8 @@ class ToneAnalyzer(Analyzer):
             Audio tone statistics result.
         """
 
-        # Select segment and get components via base class analyze()
-        super().analyze(segment)
+        # Get components via super class analyze()
+        super().analyze()
 
         # Calculate spurious, distortion, and noise from tones, based on their
         # categories and frequencies

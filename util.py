@@ -66,7 +66,7 @@ class Channel(Enum):
     Unknown = 0
     Left = 1
     Right = 2
-    Mean = 3
+    Stereo = 3
     Difference = 4
 
 

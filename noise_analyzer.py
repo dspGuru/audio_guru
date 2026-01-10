@@ -6,7 +6,6 @@ from audio import Audio
 from component import Components
 from constants import EQ_BANDS, REF_FREQ, STD_BANDS
 from freq_resp import FreqResp
-from segment import Segment
 from util import Channel
 
 __all__ = ["NoiseAnalyzer"]
@@ -36,7 +35,7 @@ class NoiseAnalysis(Analysis):
     def summary_header() -> str:
         """Return the header for the summary table."""
         return (
-            "Noise Frequency Response:\n"
+            "Noise Frequency Response\n"
             "Unit                Description        Type      Lower   Upper  Ripple   Minimum"
         )
 
@@ -77,17 +76,17 @@ class NoiseAnalyzer(Analyzer):
     # @override
     def get_components(self) -> Components:
         """Get noise frequency components."""
-        bins = self.audio.get_bins()
-
         # If audio is a sine, use channel difference for noise analysis
-        if bins.is_sine():
-            bins = self.audio.get_bins(Channel.Difference)
-        self.components = bins.get_components(self.max_components)
+        if self.audio.bins.is_sine():
+            self.audio.select(Channel.Difference)
+
+        # Get and return noise components
+        self.components = self.audio.bins.get_components(self.max_components)
         self.components.name = "Noise Components"
         return self.components
 
     # @override
-    def analyze(self, segment: Segment | None = None) -> Components:
+    def analyze(self) -> Components:
         """
         Analyze noise in the specified audio segment.
 
@@ -101,7 +100,7 @@ class NoiseAnalyzer(Analyzer):
         NoiseAnalysis
             Noise analysis.
         """
-        super().analyze(segment)
+        super().analyze()
         self.bands = self.get_bands(STD_BANDS)
         self.bands.name = "Noise Bands"
         self.analysis = NoiseAnalysis(self.components, self.bands)
@@ -119,13 +118,12 @@ class NoiseAnalyzer(Analyzer):
         ref_freq : float
             Reference frequency for normalization (default REF_FREQ).
         """
-        bins = self.audio.get_bins()
-
         # If audio is a sine, use channel difference for noise analysis
-        if bins.is_sine():
-            bins = self.audio.get_bins(Channel.Difference)
+        if self.audio.bins.is_sine():
+            self.audio.select(Channel.Difference)
 
-        bands = bins.get_bands(centers)
+        # Get and return noise bands
+        bands = self.audio.bins.get_bands(centers)
         bands.normalize_pwr(ref_freq)
         bands.name = "Noise Bands"
 

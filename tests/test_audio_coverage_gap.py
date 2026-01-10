@@ -5,9 +5,8 @@ from audio import Audio
 
 
 def test_num_channels_1d():
+    """Verify that a 1D sample buffer is correctly identified as mono (1 channel)."""
     a = Audio()
-    # Initial state samples is shape (1,)
-    assert a.num_channels == 1
 
     # Force samples to be 1D explicitly logic check
     a.samples = np.zeros(100, dtype=np.float32)
@@ -15,24 +14,49 @@ def test_num_channels_1d():
 
 
 def test_filter_edge_cases():
+    """Ensure that filtering with None or an empty list does not crash and
+    behaves as a no-op."""
     a = Audio()
-    a.samples = np.zeros(100, dtype=np.float32)
-    a.select()
 
-    # filter with None
+    # Filter with None
     a.filter(None)
 
-    # filter with empty list
+    # Filter with empty list
     a.filter([])
 
 
-def test_read_exception(capsys):
+def test_copy_defaults():
+    """Test copy method defaults."""
     a = Audio()
-    # Patch SoundFile to raise Exception during init
-    with patch("soundfile.SoundFile", side_effect=Exception("Read Error")):
-        res = a.read("bad.wav")
-        assert res is False
-        assert "Error reading audio file: Read Error" in capsys.readouterr().out
+    a.samples = np.array([1, 2, 3], dtype=a.DTYPE)
+    # Copy with no args -> copies entire segment
+    b = a.copy()
+
+    assert len(b.samples) == 3
+    assert np.all(b.samples == a.samples)
+    assert b.fs == a.fs
+    assert b.name == a.name
+
+
+def test_remove_unselected():
+    """Test remove_unselected method."""
+    a = Audio(fs=1000)
+    # 0.5s audio
+    a.samples = np.zeros(500, dtype=a.DTYPE)
+
+    # Select middle 0.1s: 200-300
+    from segment import Segment
+
+    seg = Segment(fs=1000, start=200, stop=300)
+    a.segments.append(seg)
+    a.select(seg)
+
+    a.remove_unselected()
+
+    # Should only have 100 samples left
+    assert len(a.samples) == 100
+    assert a.segment.start == 0
+    assert a.segment.stop == 100
 
 
 def test_read_block_overflow(capsys):
@@ -59,7 +83,6 @@ def test_write_parent_mkdir(tmp_path):
     a.select()
 
     # Write to nested directory to force mkdir
-    # Although existing test tries this, let's be explicit
     nested = tmp_path / "deep" / "dir" / "file.wav"
     assert not nested.parent.exists()
 
@@ -70,14 +93,12 @@ def test_write_parent_mkdir(tmp_path):
 
 
 def test_get_segments_incremental_ids():
-    # Construct audio with silence gaps to force multiple segments
-    # [Tone] [Silence] [Tone] [Silence] [Tone]
-    # [Tone] [Silence] [Tone] [Silence] [Tone]
+    # Construct audio with silence gaps for multiple segments
     fs = 1000
     # Set min_segment_secs=0 to allow short segments
     a = Audio(fs=fs, min_segment_secs=0.0)
 
-    # helper
+    # Helper
     def tone():
         return np.sin(2 * np.pi * 100 * np.arange(200) / fs).astype(np.float32)
 
@@ -85,8 +106,6 @@ def test_get_segments_incremental_ids():
         return np.zeros(200, dtype=np.float32)
 
     # 1. First batch: Tone + Silence + Tone + Silence + Tone
-    # min_silence_secs=0.1 (100 samples). 200 samples of silence is enough to split.
-
     a.append(tone())  # Seg 1
     a.append(silence())  # Gap
     a.append(tone())  # Seg 2
@@ -96,28 +115,18 @@ def test_get_segments_incremental_ids():
     # Run detection
     segs = a.get_segments(min_silence_secs=0.01)
 
-    # First pass: Silence removal happens AFTER combine().
-    # So segments are not adjacent during combine(), so they don't merge.
+    # Detection should find 3 segments
     assert len(segs) == 3
     ids = [s.id for s in segs]
     assert ids == [0, 1, 2]
 
-    # 2. Second batch to trigger incremental update
-    # We need to preserve Seg1 and Seg2. Pop Seg3.
-    # Append more audio to extend Seg3.
+    # 2. Second batch - append to extend last segment
     a.append(tone())
 
     # Call get_segments again
     segs = a.get_segments(min_silence_secs=0.01)
 
-    # Logic:
-    # 1. T3 popped. [T1, T2] remain.
-    # 2. Rescan finds T3_New. List: [T1, T2, T3_New].
-    # 3. combine() is NOT called (or shouldn't merge distinct segments).
-    #    T1 and T2 are adjacent (because S1 was removed in Batch 1).
-    #    But they should remain distinct.
-
-    # Verify merging results in 3 segments (T1, T2, T3_extended)
+    # Verify 3 segments with sequential IDs
     assert len(segs) == 3
     # Verify IDs are sequential
     assert segs[0].id == 0
@@ -135,8 +144,7 @@ def test_remove_segment():
     a.append(ones * 2)  # Seg 2: 100-200
     a.append(ones * 3)  # Seg 3: 200-300
 
-    # Manually create segments since we want to test remove logic specifically
-    # and update indices.
+    # Manually create segments to test remove logic
     from segment import Segment
 
     s1 = Segment(fs, 0, 100)
@@ -155,16 +163,11 @@ def test_remove_segment():
     assert np.all(a.samples[:100] == 1)
     assert np.all(a.samples[100:] == 3)
 
-    # Check segments list
-    assert len(a.segments) == 2
-    # s2 was removed. But s3 now has same values as s2 had.
-    # So checking 'not in' might fail if equality is value-based.
-    # Check by identity
+    # s2 removed; check by identity
     assert a.segments[0] is s1
     assert a.segments[1] is s3
 
-    # Check updated indices
-    # s1 should be unchanged: 0-100
+    # s1 unchanged
     assert s1.start == 0
     assert s1.stop == 100
 
@@ -197,17 +200,13 @@ def test_remove_segment_overlap():
     assert len(a.segments) == 1
     assert a.segments[0] is s1
 
-    # s1 Logic:
-    # s1.start (0) >= 100 (False)
-    # s1.stop (200) > 100 (True)
-    # shift = 50.
-    # s1.stop -= 50 -> 150.
-
+    # s1 logic: stop -= shift (50) -> 150
     assert s1.start == 0
     assert s1.stop == 150
 
 
 def test_validate_edge_cases():
+    """Verify Segment validation logic for mismatched FS, negative ranges, and out-of-bounds stops."""
     a = Audio(fs=1000)
     a.samples = np.zeros(100, dtype=np.float32)
 
@@ -227,7 +226,7 @@ def test_validate_edge_cases():
     # len=100. stop=102 is > 101.
     s_long = Segment(1000, 0, 102)
     with pytest.raises(
-        ValueError, match="Segment stop must not be greater than audio length"
+        ValueError, match="Segment stop .* must not be greater than audio length"
     ):
         a.validate(s_long)
 

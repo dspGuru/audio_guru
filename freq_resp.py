@@ -57,7 +57,7 @@ class FreqResp(Analysis):
     @staticmethod
     def summary_header() -> str:
         return (
-            "Frequency Response:\n"
+            "Frequency Response\n"
             "Unit                Description        Type      Lower   Upper  Ripple   Minimum"
         )
 

@@ -16,9 +16,7 @@ class TestDecibels:
         # Test rounding
         assert db(0.5, ndigits=2) == -3.01
 
-        # Test MIN_PWR clamping
-        # Any power <= MIN_PWR should result in MIN_DB (or close to it depending on implementation)
-        # implementation: pwr = max(pwr, MIN_PWR); return round(10.0 * math.log10(pwr), ndigits)
+        # MIN_PWR clamping
         min_db_val = round(10.0 * math.log10(MIN_PWR), 1)
         assert db(0.0) == min_db_val
         assert db(-1.0) == min_db_val  # Input validation
@@ -45,8 +43,7 @@ class TestDecibels:
         # Test suffix
         assert db_str(1.0, suffix=" dB").strip() == "0.0 dB"
 
-        # Test below threshold
-        # Input < MIN_PWR returns " -----"
+        # Input < MIN_PWR returns "-----"
         assert "----" in db_str(MIN_PWR * 0.1)
 
     def test_db_to_pwr_ratio(self):
@@ -55,8 +52,7 @@ class TestDecibels:
         assert db_to_pwr_ratio(20.0) == 100.0
         assert db_to_pwr_ratio(-10.0) == 0.1
 
-        # Test clamping
-        # values below MIN_DB are clamped
+        # Values below MIN_DB are clamped
         val = db_to_pwr_ratio(MIN_DB - 10.0)
         expected = 10 ** (MIN_DB / 10.0)
         assert val == pytest.approx(expected)

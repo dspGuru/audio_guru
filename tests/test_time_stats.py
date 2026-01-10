@@ -11,17 +11,11 @@ class TestTimeStats:
         # Create audio with known properties
         audio = Audio(fs=1000.0, name="TestAudio")
 
-        # Audio default is empty, let's create a segment
         # Create DC signal: all 1.0
         audio.samples = np.ones(1000, dtype=np.float32)
 
         # Select the segment so Audio properties work
         audio.select(Segment(1000.0, 0, 1000))  # 1 second
-
-        # In Audio class:
-        # dc property calculates mean
-        # rms calculates norm/sqrt(size)
-        # max/min are from selected samples
 
         stats = TimeStats(audio)
 
@@ -38,9 +32,6 @@ class TestTimeStats:
 
         # dbfs: 20*log10(max) -> 20*log10(1) = 0
         assert stats.dbfs == 0.0
-
-        # noise_floor_secs property
-        assert stats.noise_floor_secs == pytest.approx(0.0)
 
     def test_timestats_str(self):
         # TimeStats reads properties from Audio, so we need to setup Audio properly
@@ -83,29 +74,27 @@ def test_len_secs_and_slice_properties():
     s = Segment(fs=100.0, start=0, stop=100, id=0)
     assert len(s) == 100
     assert s.secs == pytest.approx(1.0)
-    # slice is inclusive of stop index in this implementation -> stop
     assert s.slice == slice(0, 100)
     assert s.start_secs == pytest.approx(0.0)
     assert s.stop_secs == pytest.approx(1.0)
 
 
 def test_title_str_and_desc_formatting():
-    s = Segment(fs=100.0, start=0, stop=99, id=0)  # default Category.Unknown
-    # title uses rounded start/stop seconds
+    s = Segment(fs=100.0, start=0, stop=99, id=0)  # Default Category.Unknown
+    # Title uses rounded start/stop seconds
     assert s.title == f"{s.cat.name}_{round(s.start_secs)}-{round(s.stop_secs)}s"
     # __str__ and desc include formatted seconds and category name
     assert "0:" in str(s)
     assert s.desc.endswith(f" {s.cat.name}")
-    # exact desc formatting expectation
     assert s.desc == f"Segment 0: {s.start_secs:0.1f}-{s.stop_secs:0.1f}s {s.cat.name}"
 
 
 def test_limit_applies_max_seconds():
     s = Segment(fs=100.0, start=0, stop=199)
-    # limit to 0.5 seconds => trunc(0.5 * 100) = 50 => stop becomes start + 50
+    # limit to 0.5s => stop = start + 50
     s.limit(0.5)
     assert s.stop == 50
-    # limit 0.0 should leave segment unchanged
+    # Limit 0.0 should leave segment unchanged
     prev = Segment(fs=100.0, start=0, stop=50)
     prev.limit(0.0)
     assert prev.stop == 50
@@ -115,9 +104,9 @@ def test_trunc_behavior_and_noop_for_short_segments():
     # trunc only acts when length >= fs
     short = Segment(fs=100.0, start=0, stop=50)  # len = 50 < fs
     short.trunc(1.0)
-    assert short.stop == 50  # unchanged
+    assert short.stop == 50  # Unchanged
 
-    # longer segment: use stop=300 so length=300, fs=100 -> n_secs=100, multiple=3 => stop = 300
+    # len=300, fs=100 -> multiple=3, stop=300
     long = Segment(fs=100.0, start=0, stop=300)
     long.trunc(1.0)
     assert long.stop == 300
@@ -130,16 +119,70 @@ def test_segments_str_lists_all_segments():
     s = str(segs)
     assert "1:" in s
     assert "2:" in s
-    # two lines expected
+    # Two lines expected
     lines = [line for line in s.splitlines() if line.strip()]
     assert len(lines) == 2
 
 
 def test_segments_str_empty_and_all_id_none():
-    # empty segments -> empty string
+    # Empty segments -> empty string
     segs = Segments([])
     assert str(segs) == ""
 
     # id None -> "All" prefix in representation
     s = Segment(fs=100.0, start=0, stop=99, id=None, cat=Category.Unknown)
     assert "All:" in str(s)
+
+
+def test_timestats_quadrature_signal():
+    """TimeStats for quadrature signal includes phase and balance."""
+    fs = 1000
+    t = np.arange(1000) / fs
+    freq = 100.0
+    amp = 0.8
+
+    # Complex exponential: perfect quadrature
+    ch0 = amp * np.cos(2 * np.pi * freq * t).astype(np.float32)
+    ch1 = amp * np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+    audio = Audio(fs=fs)
+    audio.samples = np.column_stack((ch0, ch1))
+    audio.select()
+
+    stats = TimeStats(audio)
+
+    # Phase error represents the cumulative phase shift over the segment.
+    # For a persistent quadrature signal, this should be non-zero and positive.
+    assert stats.phase_error is not None
+    assert stats.phase_error > 0
+    assert stats.amplitude_balance is not None
+    assert stats.amplitude_balance == pytest.approx(1.0, rel=0.01)
+
+    # Check string output
+    s = str(stats)
+    assert "Phase Error =" in s
+    assert "Balance =" in s
+    assert "degrees" in s
+
+
+def test_timestats_non_quadrature_signal():
+    """TimeStats for non-quadrature signal shows 'Not found'."""
+    audio = Audio(fs=1000)
+    audio.samples = np.ones(1000, dtype=np.float32)  # Mono DC signal
+    audio.select()
+
+    stats = TimeStats(audio)
+
+    # Should be None
+    assert stats.phase_error is None
+    assert stats.amplitude_balance is None
+
+    # Check string output shows "Not found"
+    s = str(stats)
+    assert "Phase = Not found" in s
+    assert "Balance = Not found" in s
+
+    # Check to_dict includes None values
+    d = stats.to_dict()
+    assert d["Phase"] is None
+    assert d["Balance"] is None

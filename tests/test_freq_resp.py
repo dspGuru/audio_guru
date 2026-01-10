@@ -16,11 +16,9 @@ class DummyComponents(list):
         self._edges = edges
 
     def ripple(self, lower, upper):
-        # mimic real implementation signature; ignore bounds for test
         return self._ripple_value
 
     def band_edges(self, lower, upper, tol):
-        # return preconfigured edges
         return self._edges
 
 

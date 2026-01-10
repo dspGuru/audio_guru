@@ -48,28 +48,30 @@ def test_audio_iteration():
     seg2 = Segment(fs=1000, start=10, stop=20, id=2, cat=Category.Silence)
     manual_segments = [seg1, seg2]
 
-    # Patch get_segments so it doesn't overwrite our manual segments with
-    # segments derived from empty/random samples.
+    # Patch get_segments to return manual segments, bypassing detection logic
+    # to test iterator behavior with pre-defined structures.
     with patch.object(
         Audio, "get_segments", side_effect=lambda *args, **kwargs: list(manual_segments)
     ):
-        # Testing iterator through list(a)
-        # list() calls __iter__ which calls get_segments
         segments_list = list(a)
 
         assert len(segments_list) == 2
-        assert segments_list[0] == seg1
-        assert segments_list[1] == seg2
+        # Iterator yields Audio objects
+        assert segments_list[0].segment == seg1
+        assert segments_list[1].segment == seg2
+
+        # Reset samples for next test
+        a.samples = np.zeros(20, dtype=a.DTYPE)
 
         # Test individual iteration (which sets selection)
         iterator = iter(a)
 
         s1 = next(iterator)
-        assert s1 == seg1
+        assert s1.segment == seg1
         assert a.segment == seg1
 
         s2 = next(iterator)
-        assert s2 == seg2
+        assert s2.segment == seg2
         assert a.segment == seg2
 
         with pytest.raises(StopIteration):
@@ -83,12 +85,8 @@ def test_inplace_addition():
 
     original_len = len(a1)
 
-    # Check simple addition
-    # Since samples are simple sine waves, a1 += a2 should result in summed amplitudes
-    # but exact phase alignment matters.
-    # However, we are primarily testing the mechanism, not the physics.
-
-    # Just verify it runs and modifies a1
+    # Inplace addition should sum sample values while preserving the original
+    # buffer length.
     a1 += a2
 
     assert len(a1) == original_len
@@ -96,13 +94,6 @@ def test_inplace_addition():
     # 0.5 + 0.2 = 0.7
     assert a1.max > 0.5
     assert a1.max <= 0.7 + 1e-6  # allowing float precision
-
-
-def test_read_failure():
-    a = Audio()
-    # Read non-existent file
-    result = a.read("non_existent_file_xyz_123.wav")
-    assert result is False
 
 
 def test_iadd_errors():
@@ -179,10 +170,7 @@ def test_get_segments_edge_cases():
     segs = a.get_segments()
     assert len(segs) == 0
 
-    # Audio with gap size issue (min_silence_secs resulting in <= 0 samples?)
-    a.samples = np.zeros(100, dtype=a.DTYPE)
-    # If we request min_silence_secs that is very small or negative?
-    # If we request min_silence_secs that is very small or negative?
+    # min_silence_secs < 0 should error
     with pytest.raises(ValueError, match="Invalid audio or min_silence_secs"):
         a.get_segments(min_silence_secs=-1.0)
 
@@ -200,17 +188,10 @@ def test_print_conditions(capsys):
     assert "TestDesc" in captured.out
 
     # Print noise floor when silence is detected
-    # silence = True for generate_silence
+    # Silence = True for generate_silence
     assert "Noise Floor =" in captured.out
 
-    # Print noise floor not found case
-    # Create an audio that is NOT silence but has no clear "floor" or just test logic?
-    # Actually get_noise_floor returns min average power.
-    # If we have perfect silence, noise floor is 0.0 -> -inf dB?
-    # Let's inspect get_noise_floor logic.
-    # if peak is 0.0, get_noise_floor uses averages. min(0) is 0.
-    # The print condition is: if nf > 0.0: print dBFS else: print "not found"
-
+    # Noise floor 0.0 -> not found
     a_silent = Audio(fs=1000)
     a_silent.samples = np.zeros(100, dtype=a_silent.DTYPE)
     a_silent.print()

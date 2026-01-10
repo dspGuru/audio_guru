@@ -1,5 +1,7 @@
 """Audio time-domain statistics module."""
 
+import numpy as np
+
 from analysis import Analysis
 from audio import Audio
 from decibels import dbv
@@ -21,9 +23,13 @@ class TimeStats(Analysis):
         rms : float
             Signal RMS value.
         noise_floor : float
-            Estimated noise floor.
-        noise_floor_idx : int
-            Index of the noise floor in samples.
+            Estimated average noise floor.
+        is_quadrature : bool
+            True if the signal is quadrature.
+        phase_error : float | None
+            Phase error in radians between channels (quadrature signals only).
+        amplitude_balance : float | None
+            Ratio of channel RMS values (quadrature signals only).
     """
 
     def __init__(self, audio: Audio) -> None:
@@ -41,12 +47,22 @@ class TimeStats(Analysis):
         self.min = audio.min
         self.max = audio.max
         self.rms = audio.rms
-        self.noise_floor, self.noise_floor_idx = audio.get_noise_floor()
+        self.noise_floor = audio.avg_noise_floor
+        self.is_quadrature = audio.is_quadrature
 
-    @property
-    def noise_floor_secs(self) -> float:
-        """Return the time in seconds of the noise floor index."""
-        return float(self.noise_floor_idx) / self.md.fs
+        # Quadrature statistics
+        self.phase_error = None
+        self.amplitude_balance = None
+        if self.is_quadrature:
+            # Phase error: radians between channels for quadrature sine signals
+            self.phase_error = audio.phase_error()
+
+            # Amplitude balance: ratio of channel RMS values (closer to 1.0 = better)
+            samples = audio.selected_samples
+            rms0 = float(np.sqrt(np.mean(samples[:, 0] ** 2)))
+            rms1 = float(np.sqrt(np.mean(samples[:, 1] ** 2)))
+            if rms0 > 0.0 and rms1 > 0.0:
+                self.amplitude_balance = min(rms0, rms1) / max(rms0, rms1)
 
     def __str__(self) -> str:
         """Return a multi-line string representation of the stats."""
@@ -55,6 +71,7 @@ class TimeStats(Analysis):
         lines.append(f"Time Stats ({self.md.segment})")
         lines.append("---------------------------------------")
         lines.append(f"Fs    = {self.md.fs} Hz")
+        lines.append(f"Secs  = {self.md.secs:0.3f} s")
         lines.append(f"DC    = {self.dc:0.3f} = {dbv(self.dc):0.1f} dBFS")
         lines.append(f"Max   = {self.max:0.3f} = {dbv(self.max):0.1f} dBFS")
         lines.append(f"Min   = {self.min:0.3f} = {dbv(self.min):0.1f} dBFS")
@@ -64,6 +81,21 @@ class TimeStats(Analysis):
             f"Noise = {self.noise_floor:0.3f} = {dbv(self.noise_floor):0.1f} dBFS"
         )
 
+        # Quadrature statistics: phase error and amplitude balance
+        if self.phase_error is None:
+            lines.append("Phase = Not found")
+        else:
+            ph_err_deg = np.degrees(self.phase_error)
+            lines.append(f"Phase Error = {ph_err_deg:0.1f} degrees")
+
+        if self.amplitude_balance is None:
+            lines.append("Balance = Not found")
+        else:
+            lines.append(
+                f"Balance = {self.amplitude_balance:0.3f} = {dbv(self.amplitude_balance):0.1f} dB"
+            )
+
+        # Return the joined lines
         return "\n".join(lines)
 
     @property
@@ -90,6 +122,8 @@ class TimeStats(Analysis):
             ("RMS", self.rms),
             ("DC", self.dc),
             ("Crest", self.crest),
+            ("Phase", self.phase_error),
+            ("Balance", self.amplitude_balance),
         ]
         stats = dict(stats_list)
         return stats
@@ -98,7 +132,7 @@ class TimeStats(Analysis):
     def summary_header() -> str:
         """Return statistics summary header"""
         return (
-            "Time Statistics:\n"
+            "Time Statistics\n"
             "Unit                Description        Type    Secs    RMS  Crest  dBFS     DCFS"
         )
 

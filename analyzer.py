@@ -8,7 +8,7 @@ import pandas as pd
 
 from audio import Audio
 from component import Components
-from constants import DEFAULT_MAX_ANALYSIS_SECS, MIN_SEGMENT_SECS
+from constants import DEFAULT_MAX_ANALYSIS_SECS, SEGMENT_MIN_SECS
 from segment import Segment
 from time_stats import TimeStats
 
@@ -27,7 +27,7 @@ class Analyzer(ABC):
 
     Abstract Methods
     ----------------
-        analyze(segment: Segment | None = None) -> object
+        analyze() -> object
             Calculate and return statistics from audio analysis.
         get_components() -> Components
             Get audio components from analysis.
@@ -55,24 +55,17 @@ class Analyzer(ABC):
         return self.audio.fs
 
     @abstractmethod
-    def analyze(self, segment: Segment | None = None) -> TimeStats:
+    def analyze(self) -> TimeStats:
         """
         Abstract method to calculate and return statistics from audio analysis.
-        Selects the specified segment of audio for analysis by derived classes
-        and calls the get_components() method overridden by the derived class.
+        Calls the get_components() method overridden by the derived class.
         Sets and returns the time-domain statistics.
-
-        Parameters
-        ----------
-        segment : Segment | None
-            Segment of audio to analyze. If None, use the entire audio.
 
         Returns
         -------
         TimeStats
             Time-domain statistics.
         """
-        self.select(segment)
         self.time_stats = TimeStats(self.audio)
         self.components = self.get_components()
         return self.time_stats
@@ -98,9 +91,9 @@ class Analyzer(ABC):
         kwargs
             Keyword arguments.
         """
-        print_components: bool = kwargs.get("components", False)
-        if print_components:
-            self.components.print()
+        max_components: int | None = kwargs.get("components", None)
+        if max_components is not None:
+            self.components.print(max_components=max_components)
             print()
 
     @abstractmethod
@@ -141,15 +134,16 @@ class Analyzer(ABC):
 
         Parameters
         ----------
-        Sample rate check.
-
-        Parameters
-        ----------
         segment : Segment | None
             The audio segment to select. If None, select the entire audio.
         max_secs : float
             Maximum duration of the selection in seconds (default
             DEFAULT_MAX_ANALYSIS_SECS).
+
+        Raises
+        ------
+        ValueError
+            If the audio segment is too short to analyze.
         """
         if segment is None:
             segment = Segment(self.fs, 0, len(self.audio))
@@ -162,7 +156,7 @@ class Analyzer(ABC):
 
         # Raise ValueError if the selected audio segment is too short for
         # meaningful analysis
-        if segment.secs < MIN_SEGMENT_SECS:
+        if segment.secs < SEGMENT_MIN_SECS:
             raise ValueError(f"Audio segment {segment} is too short to analyze")
 
         self.audio.select(segment)

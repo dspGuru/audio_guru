@@ -59,5 +59,6 @@ def test_analyze(tone_audio):
 def test_analyze_with_segment(tone_audio):
     """Test analyze method with a specific segment."""
     analyzer = TimeAnalyzer(tone_audio)
-    stats = analyzer.analyze(segment=None)
+    analyzer.select(segment=None)
+    stats = analyzer.analyze()
     assert isinstance(stats, TimeStats)

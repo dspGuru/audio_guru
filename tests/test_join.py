@@ -10,13 +10,15 @@ from join import join_files, main
 from time_analyzer import TimeAnalyzer
 import generate
 
-# Define paths to example files
-EXAMPLES_DIR = Path("examples")
-TONE_FILE = EXAMPLES_DIR / "test_tone_1k.wav"
-NOISE_FILE = EXAMPLES_DIR / "test_noise.wav"
+# Define paths to signal files
+SIGNALS_DIR = Path("signals")
+TONE_FILE = SIGNALS_DIR / "05-test_tone_1k.wav"
+NOISE_FILE = SIGNALS_DIR / "13-test_noise.wav"
 
 
 def test_join_files(tmp_path):
+    """Verify joining of multiple files with and without inter-segment
+    silence."""
     # Create two temporary test files
     file1 = tmp_path / "test1.wav"
     file2 = tmp_path / "test2.wav"
@@ -29,7 +31,7 @@ def test_join_files(tmp_path):
     a1.write(str(file1))
 
     a2 = silence(1.0, fs=DEFAULT_FS)
-    a2.samples[:] = 0.0  # Already zeros, but being explicit
+    a2.samples[:] = 0.5  # Use non-zero values to avoid initial silence removal
     a2.write(str(file2))
 
     # Test join without silence
@@ -74,11 +76,11 @@ def test_join_creates_output_dir(tmp_path):
     assert output.exists()
 
 
-def test_joined_stats(examples_dir, tmp_path):
+def test_joined_stats(signals_dir, tmp_path):
     # We want specific files to be deterministic
     files_to_join: list[Path] = [
-        examples_dir / "test_tone_1k.wav",
-        examples_dir / "test_noise.wav",
+        signals_dir / "05-test_tone_1k.wav",
+        signals_dir / "13-test_noise.wav",
     ]
 
     # Check existence
@@ -88,7 +90,7 @@ def test_joined_stats(examples_dir, tmp_path):
 
     # 2. Join them with silence
     silence_secs = 1.0
-    # convert Paths to strings
+    # Convert Paths to strings
     file_strs = [str(f) for f in files_to_join]
 
     joined_audio = join_files(file_strs, silence_secs=silence_secs)
@@ -101,8 +103,7 @@ def test_joined_stats(examples_dir, tmp_path):
     # Read joined file back
     read_joined = Audio()
 
-    # Verify that the length of the joined audio is close to the
-    # sum of the lengths of the files that were joined
+    # Verify joined length matches sum of original files
     read_joined.read(str(joined_path))
 
     audio = Audio()
@@ -112,8 +113,7 @@ def test_joined_stats(examples_dir, tmp_path):
         total_secs += audio.segment.secs
     assert abs(read_joined.segment.secs - total_secs) < 2.0
 
-    # Get segments
-    # Audio.get_segments should separate by silence (assuming 1.0s is enough to be detected)
+    # Audio.get_segments separates by silence
     segments = read_joined.get_segments()
 
     assert len(segments) == len(files_to_join)
@@ -126,8 +126,7 @@ def test_joined_stats(examples_dir, tmp_path):
         orig_analyzer = TimeAnalyzer(orig_audio)
         orig_stats = orig_analyzer.analyze()
 
-        # Analyze the *Active* part of original to be fair comparisons
-        # Split logic removes silence, so we compare against non-silent original part
+        # Select active part of original
         orig_segs = orig_audio.get_segments()
         if orig_segs:
             orig_audio.select(orig_segs[0])
@@ -146,10 +145,7 @@ def test_joined_stats(examples_dir, tmp_path):
         split_analyzer = TimeAnalyzer(split_audio)
         split_stats = split_analyzer.analyze()
 
-        # Verify stats match
-        # RMS
-        # Relax tolerance for noise which might have edge effects variations
-        # Also relax for Tone where joined context might affect boundary refinement (cleaner segment)
+        # Relax tolerance for noise edge effects
         tol = 0.15 if "noise" in orig_path.name else 0.05
         assert split_stats.rms == pytest.approx(
             orig_stats.rms, rel=tol
@@ -167,13 +163,12 @@ def test_joined_stats(examples_dir, tmp_path):
 
 
 def test_join_integrity(tmp_path):
+    """Verify the integrity of a joined file by splitting it and comparing statistics against originals."""
     # Verify examples exist
     if not TONE_FILE.exists() or not NOISE_FILE.exists():
         pytest.skip("Example files not found, skipping integration test.")
 
-    # 1. Join files with 1.0 second silence
-    # Note: join_files takes a list of glob patterns.
-    # We pass exact paths as patterns.
+    # Join files with 1.0s silence
     patterns = [str(TONE_FILE), str(NOISE_FILE)]
     silence_secs = 1.0
 
@@ -187,12 +182,7 @@ def test_join_integrity(tmp_path):
     reloaded = Audio()
     assert reloaded.read(joined_path) == 1
 
-    # 4. Split / Iterate
-    # Audio iteration uses get_segments which detects silence gaps.
-    # We expect 2 segments: Tone and Noise.
-    # The silence gap of 1.0s should be sufficient for default get_segments settings.
-    # default min_silence_secs=0.1.
-
+    # Expect 2 segments (default min_silence_secs=0.1)
     segments = list(reloaded)
 
     # Verify we found 2 segments
@@ -208,67 +198,48 @@ def test_join_integrity(tmp_path):
     # 6. Compare Statistics
 
     # Segment 0 -> Tone
-    reloaded.select(segments[0])
+    # Reloaded iterator returns new Audio objects for each segment
+    tone_segment = segments[0]
+
     # Compare RMS, Max, Min with tolerance
-    # Re-reading/Writing audio can introduce minor quantization noise if formats differ,
-    # but likely float32 -> float32 or pcm16 round trip.
-    # Usually robust to ~1% or better.
-
     # Compare active segment vs active segment
-    # The original files may have silence. We must compare the 'active' part of both.
-
-    # Process original tone to find its active segment
     orig_tone_segs = orig_tone.get_segments()
     assert len(orig_tone_segs) == 1
     orig_tone.select(orig_tone_segs[0])
 
-    assert reloaded.rms == pytest.approx(orig_tone.rms, rel=1e-3)
-    assert reloaded.max == pytest.approx(orig_tone.max, rel=1e-3)
-    assert reloaded.freq == pytest.approx(orig_tone.freq, abs=5.0)
+    assert tone_segment.rms == pytest.approx(orig_tone.rms, rel=1e-3)
+    assert tone_segment.max == pytest.approx(orig_tone.max, rel=1e-3)
+    assert tone_segment.freq == pytest.approx(orig_tone.freq, abs=5.0)
 
     # Segment 1 -> Noise
-    reloaded.select(segments[1])
+    noise_segment = segments[1]
 
     # Process original noise
     orig_noise_segs = orig_noise.get_segments()
     if not orig_noise_segs:
-        # If noise is constant and considered ONE segment? or none?
-        # get_segments returns non-silent parts.
-        # If orig_noise is detected as 1 segment
         assert len(orig_noise_segs) == 1
         orig_noise.select(orig_noise_segs[0])
     else:
-        # If it returns multiple, pick the main one?
-        # Assume 1 for the test file
+        # Assume 1 segment for test file
         orig_noise.select(orig_noise_segs[0])
 
-    assert reloaded.rms == pytest.approx(orig_noise.rms, rel=1e-3)
+    assert noise_segment.rms == pytest.approx(orig_noise.rms, rel=1e-3)
     # Noise max might fluctuate slightly depending on how boundaries are cut vs original,
     # but should be very close.
-    assert reloaded.max == pytest.approx(orig_noise.max, rel=1e-2)
+    assert noise_segment.max == pytest.approx(orig_noise.max, rel=1e-2)
     # Frequency of noise is unstable, so maybe skip freq check or check it's not a tone.
 
-    # 7. Check Segment Descriptions (Optional but good)
-    # get_segments(categorize=True) is called by __iter__.
-    # So segments should have categories.
-    # Tone -> Category.Tone
-    # Noise -> Category.Noise (or Unknown if not recognized as Sine/Sweep)
-
-    # Manually categorize since __iter__ no longer does it locally without explicit call?
-    # Actually __iter__ calls get_segments which defaults categorize=False (based on recent changes? No, get_segments removed categorize arg).
-    # We must categorize manually or trust that generated segments have valid defaults.
-    # But checks below rely on category property.
-
-    # We check if it is NOT Silence or Tone for the noise part.
-    assert segments[1].cat not in [Category.Silence, Category.Tone]
+    # Segments have categories from __iter__ calling get_segments
+    # Noise should not be Silence or Tone
+    assert noise_segment.segment.cat not in [Category.Silence, Category.Tone]
 
     # Mock command line arguments
     output_file = tmp_path / "output.wav"
     # We use valid example files to ensure it runs through
     test_args = [
         "join.py",
-        "examples/test_tone_1k.wav",
-        "examples/test_noise.wav",
+        "signals/05-test_tone_1k.wav",
+        "signals/13-test_noise.wav",
         "-w",
         str(output_file),
         "-s",
@@ -276,26 +247,19 @@ def test_join_integrity(tmp_path):
     ]
 
     with patch.object(sys, "argv", test_args):
-        # We also need to mock print or capturing stdout could be useful,
-        # but the main goal is verifying it runs and produces output.
         main()
 
     with patch.object(sys, "argv", test_args):
-        # We also need to mock print or capturing stdout could be useful,
-        # but the main goal is verifying it runs and produces output.
         main()
 
     assert output_file.exists()
 
 
 def test_join_no_files():
-    # Test join_files when no files differ
-    # join_files handles list of patterns
-    # if patterns match nothing, it returns empty Audio
-
+    # join_files handles list of patterns; if none match, returns empty Audio
     with patch("join.glob.glob") as mock_glob:
         mock_glob.return_value = []
-        # pattern that doesn't exist
+        # Pattern that doesn't exist
         with patch.object(Path, "exists") as mock_exists:
             mock_exists.return_value = False
 
@@ -327,7 +291,7 @@ def test_join_read_fail():
 
 def test_main_no_write(tmp_path):
     # Test main when -w is NOT provided
-    test_args = ["join.py", "examples/test_tone_1k.wav"]
+    test_args = ["join.py", "signals/05-test_tone_1k.wav"]
 
     with patch.object(sys, "argv", test_args):
         # Mock join_files to return something so we reach the check

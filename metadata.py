@@ -2,9 +2,11 @@
 
 import pathlib
 
+import soundfile as sf
+
 from segment import Segment
 
-__all__ = ["split_pathname", "Metadata"]
+__all__ = ["split_pathname", "SourceInfo", "Metadata"]
 
 
 def split_pathname(pathname: str) -> tuple[str]:
@@ -54,6 +56,55 @@ def split_pathname(pathname: str) -> tuple[str]:
     return (mfr, model, desc)
 
 
+class SourceInfo(dict):
+    """
+    Audio source metadata
+    """
+
+    info_fields = {
+        "title",
+        "artist",
+        "album",
+        "date",
+        "comment",
+        "copyright",
+        "software",
+        "license",
+        "tracknumber",
+        "genre",
+    }
+
+    def __init__(self, info: dict):
+        super().__init__(info)
+
+    def set_sf_metadata(self, sf_obj: sf.SoundFile) -> None:
+        """
+        Set metadata fields on a SoundFile object from a dictionary.
+
+        This is the companion function to SoundFile.copy_metadata(). It takes
+        a dictionary (typically from copy_metadata()) and applies matching
+        fields to a SoundFile opened in write mode.
+
+        Parameters
+        ----------
+        sf_obj : soundfile.SoundFile
+            An open SoundFile in write mode.
+        metadata : dict
+            Dictionary with keys from source_fields (title, artist, album, etc.)
+
+        Examples
+        --------
+        >>> with sf.SoundFile('input.flac') as src:
+        ...     md = src.copy_metadata()
+        >>> with sf.SoundFile('output.wav', 'w', samplerate=48000, channels=2) as dst:
+        ...     set_metadata(dst, md)
+        ...     dst.write(samples)
+        """
+        for field in SourceInfo.info_fields:
+            if field in self and self[field]:
+                setattr(sf_obj, field, str(self[field]))
+
+
 class Metadata:
     """
     Audio Metadata
@@ -70,6 +121,8 @@ class Metadata:
         Model ID of unit under test.
     _desc : str
         Description of test signal.
+    info : dict
+        Metadata fields from audio source.
     """
 
     def __init__(self, pathname: str, segment: Segment):
@@ -88,9 +141,34 @@ class Metadata:
 
         # Split the pathname's basename into the remaining components
         self.mfr, self.model, self._desc = split_pathname(self.pathname)
+        self.info = SourceInfo({})
+
+    @property
+    def name(self) -> str:
+        """Return the file name (pathname)."""
+        return self.pathname
+
+    @name.setter
+    def name(self, value: str) -> None:
+        """Set the file name (pathname)."""
+        self.pathname = value
+        # Re-split the pathname to update mfr, model, desc
+        self.mfr, self.model, self._desc = split_pathname(self.pathname)
 
     def __len__(self):
         return len(self.segment)
+
+    def __str__(self) -> str:
+        """Return a string representation of the metadata."""
+        basename = pathlib.Path(self.pathname).stem
+        return (
+            f"Signal {basename}, segment {self.segment}\n"
+            f"===============================================================================\n"
+            f"  Pathname    : {self.pathname}\n"
+            f"  Manufacturer: {self.mfr}\n"
+            f"  Model       : {self.model}\n"
+            f"  Description : {self.desc}\n"
+        )
 
     @property
     def fs(self) -> int:

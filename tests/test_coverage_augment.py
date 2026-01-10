@@ -19,7 +19,7 @@ from segment import Segment, Segments
 from sweep_analyzer import SweepAnalyzer
 from time_stats import TimeStats
 from tone_analyzer import ToneAnalyzer
-from util import Category
+from util import Category, Channel
 
 
 # ---------------------------------------------------------------------------
@@ -30,12 +30,7 @@ from util import Category
 def test_segment_trunc_snap_tolerance():
     """Segment.trunc() should snap to next second when within 1ms tolerance."""
     fs = 48000
-    # Create a segment that is 0.999s - should snap up to 1.0s
-    # n = fs * 0.999 = 47952 samples
-    # 1 second = 48000 samples
-    # Remainder = 47952 % 48000 = 47952
-    # n_secs - remainder = 48000 - 47952 = 48 samples = 1ms exactly at 48kHz
-    # So this should snap up
+    # 0.999s should snap to 1.0s (within 1ms tolerance)
     samples = round(fs * 0.999)  # 47952 samples
     seg = Segment(fs=fs, start=0, stop=samples)
 
@@ -44,27 +39,15 @@ def test_segment_trunc_snap_tolerance():
 
     seg.trunc(1.0)
 
-    # Should snap up to 48000 samples (1.0 seconds)
-    # multiple = (47952 // 48000) + 1 = 0 + 1 = 1
-    # new_stop = 0 + 1 * 48000 = 48000
-    # Wait, that exceeds original stop - let's recalculate
-    # Actually if n (len) > n_secs, we do the calculation
-    # Here n = 47952 < 48000, so we don't enter the if block at all
-    # Need to create segment > 1 second that's within tolerance of next multiple
-
-    # Create 1.999 second segment (within 1ms of 2 seconds)
-    samples = round(fs * 2.0) - 40  # 96000 - 40 = 95960, ~1.9992 seconds
+    # Note: if len < n_secs, we don't enter the truncation path
+    # Create 1.999s segment instead
+    samples = round(fs * 2.0) - 40  # 95960 samples, ~1.9992 seconds
     seg = Segment(fs=fs, start=0, stop=samples)
     initial_len = len(seg)
 
     seg.trunc(1.0)
 
-    # Should snap to 96000 (2.0 seconds) since we're within tolerance
-    # n = 95960, n_secs = 48000, remainder = 95960 % 48000 = 47960
-    # n_secs - remainder = 48000 - 47960 = 40 samples
-    # tolerance = max(1, round(48000 * 0.001)) = 48 samples
-    # 40 <= 48 so we snap up to multiple = (95960 // 48000) + 1 = 1 + 1 = 2
-    # new_stop = 0 + 2 * 48000 = 96000
+    # Should snap to 96000 (2.0s) since within 48-sample tolerance
     assert seg.stop == fs * 2
 
 
@@ -77,10 +60,7 @@ def test_segment_trunc_no_snap_outside_tolerance():
 
     seg.trunc(1.0)
 
-    # Should truncate to 48000 (1.0 second)
-    # n = 72000, n_secs = 48000, remainder = 72000 % 48000 = 24000
-    # n_secs - remainder = 48000 - 24000 = 24000 samples, way > tolerance (48)
-    # So multiple = 72000 // 48000 = 1
+    # Should truncate to 1.0s (well outside tolerance)
     assert seg.stop == fs
 
 
@@ -189,14 +169,14 @@ def test_audio_analyzer_timestats_analysis():
     analyzer.audio = audio
 
     # Analyze - should handle TimeStats path
-    result = analyzer.analyze(seg)
+    analyzer.audio.select(seg)
+    result = analyzer.analyze(analyzer.audio)
 
     # TimeAnalyzer returns TimeStats, which triggers the isinstance check
     assert result is not None
 
 
-# ---------------------------------------------------------------------------
-# audio_analyzer.py line 172 - Empty pattern match (continue on no blocks)
+# audio_analyzer.py - Verify pattern match behavior and empty results.
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +207,8 @@ def test_component_summary_header():
 
 
 def test_tone_analyzer_spur_harmonic():
-    """ToneAnalyzer recategorizes noise as spur when it's harmonic of a spur."""
+    """Verify recategorization of noise as spurious if it aligns with a spur's
+    harmonic."""
     # Create primary tone at 1000 Hz
     audio = sine(freq=1000, secs=2.0, amp=0.9, silence_secs=0.0)
 
@@ -272,7 +253,7 @@ def test_sweep_analyzer_adds_dummy_for_empty():
     """SweepAnalyzer adds dummy component when no components found."""
     # Create very short nearly silent audio
     audio = Audio(fs=48000)
-    audio.samples = np.zeros(48000 * 2, dtype=audio.DTYPE)  # 2 seconds of silence
+    audio.samples = np.zeros(48000 * 2, dtype=audio.DTYPE)  # Two seconds of silence
     audio.samples += np.random.uniform(-1e-10, 1e-10, len(audio.samples)).astype(
         audio.DTYPE
     )  # Tiny noise
@@ -301,7 +282,7 @@ def test_distortion_with_silence():
 
 def test_sweep_with_silence():
     """sweep() appends silence when silence_secs > 0."""
-    audio = sweep(secs=1.0, silence_secs=0.5)
+    audio = sweep(secs=1.0, silence_secs=0.5, channel=Channel.Left)
 
     # Total should be 1.0 + 0.5 = 1.5 seconds
     expected_samples = round(1.5 * DEFAULT_FS)
@@ -343,3 +324,38 @@ def test_segment_desc_without_id():
 
     assert "Segment" not in desc  # No segment prefix when id is None
     assert "Tone" in desc
+
+
+def test_audio_cache_invalidation():
+    """Test that Audio properties are cached and invalidated on select."""
+    a = Audio(fs=1000)
+    # 0.5s of 1.0, 0.5s of 0.5
+    s1 = np.ones(500, dtype=np.float32)
+    s2 = np.ones(500, dtype=np.float32) * 0.5
+    a.samples = np.concatenate((s1, s2))
+
+    # Select first half
+    seg1 = Segment(1000, 0, 500)
+    a.select(seg1)
+
+    # Access expensive properties to populate cache
+    max1 = a.max
+    rms1 = a.rms
+
+    assert max1 == pytest.approx(1.0)
+    assert rms1 == pytest.approx(1.0)
+
+    # Verify values are cached (access again should be fast/consistent)
+    assert a.max == 1.0
+
+    # Select second half - should invalidate cache
+    seg2 = Segment(1000, 500, 1000)
+    a.select(seg2)
+
+    # Values should update
+    assert a.max == pytest.approx(0.5)
+    assert a.rms == pytest.approx(0.5)
+
+    # Verify cache is populated with new values
+    assert "max" in a.__dict__
+    assert a.__dict__["max"] == 0.5

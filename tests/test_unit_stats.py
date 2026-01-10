@@ -25,7 +25,7 @@ class TestUnitStats:
 
         stats2 = UnitStats("U2")
         stats2.num_tests = 2
-        stats2.noise_floor = 0.002  # Higher (worse?) or just max amplitude
+        stats2.noise_floor = 0.002
         stats2.thd = 0.005
         stats2.snr = 200.0
 
@@ -55,16 +55,11 @@ class TestUnitStats:
         # Check averaged 1kHz component
         comp_1k = stats1.freq_response.find_freq(DEFAULT_FREQ)
         assert comp_1k is not None
-        assert comp_1k.pwr == pytest.approx((1.0 + 0.5) / 2)  # Magnitude averaged?
-        # Wait, the code averages magnitude: comp.magnitude = (comp.magnitude + other_comp.magnitude) / 2
-        # Component doesn't have .magnitude, it has .pwr!
-        # This is a BUG in `unit_stats.py`. I will fix it in EXECUTION.
-        # Actually pwr is used in source code for unit_stats.py line 47.
-        # my_comp.pwr = (my_comp.pwr + other_comp.pwr) / 2
-        # So it is correct.
+        assert comp_1k.pwr == pytest.approx((1.0 + 0.5) / 2)
 
     def test_aggregate_overlapping_results(self):
-        # Hit line 26: if test_name in self.results:
+        # Verify that result values are summed if a test name repeat across
+        # aggregated units.
         stats1 = UnitStats("U1")
         stats1.results["T1"] = 1.0
 
@@ -73,20 +68,17 @@ class TestUnitStats:
 
         stats1.aggregate(stats2)
 
-        # Should sum them? The code says:
-        # self.results[test_name] += result
+        # Should sum overlapping results
         assert stats1.results["T1"] == 3.0
 
     def test_print_specs_coverage(self, capsys):
         stats = UnitStats("U1")
 
-        # Add freq response checks to hit line 64: if len(self.freq_response) > 0
+        # Verify frequency response logic when components are present.
         c1 = Component(100.0, 1.0, 0.0, Category.Tone)
         stats.freq_response.append(c1)
 
-        # Add overlap in band for ripple calc (line 70)
-        # band edges: 20 to 20000. 100 Hz is in band.
-        # Need multiple? Ripple = max - min.
+        # Multiple components for ripple calc
         c2 = Component(DEFAULT_FREQ, 0.5, 0.0, Category.Tone)
         stats.freq_response.append(c2)
 
@@ -101,7 +93,7 @@ class TestUnitStats:
 
         mgr = UnitStatsManager()
 
-        # Hit line 92: if unit_id not in self.units
+        # Verify automatic creation of UnitStats if the unit_id is new.
         mgr.add_result("U1", "Test1", 10.0)
 
         assert "U1" in mgr.units
@@ -109,7 +101,8 @@ class TestUnitStats:
         assert stats.num_tests == 1
         assert stats.results["Test1"] == 10.0
 
-        # Add another result to existing unit (implicit else path, but covers logic flow)
+        # Add another result to existing unit (implicit else path, but covers
+        # logic flow)
         mgr.add_result("U1", "Test2", 20.0)
         assert stats.num_tests == 2
 
@@ -141,7 +134,8 @@ class TestUnitStats:
         assert stats1.noise_floor == 0.001
 
     def test_aggregate_missing_snr(self):
-        # Hit line 35-38 (try...except AttributeError)
+        # Gracefully handle missing attributes (e.g. snr) in the unit being
+        # aggregated.
         stats1 = UnitStats("U1")
         stats1.snr = 10.0
 
@@ -154,8 +148,7 @@ class TestUnitStats:
         assert stats1.snr == 10.0
 
     def test_print_specs_empty_band_components(self, capsys):
-        # Hit line 74: else: dev = 0.0
-        # Create a unit with components outside the ripple band (20Hz - 20kHz)
+        # Create components outside ripple band (20 Hz-20 kHz)
         stats = UnitStats("U1")
         c1 = Component(10.0, 1.0, 0.0, Category.Tone)  # Below 20
         c2 = Component(30000.0, 1.0, 0.0, Category.Tone)  # Above 20k

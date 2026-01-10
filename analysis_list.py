@@ -71,7 +71,7 @@ class AnalysisList(list):
             Summary string.
         """
         if not self:
-            return "Empty AnalysisList"
+            return "Empty Analysis List"
 
         summary_lines = [
             type(self[0]).summary_header(),

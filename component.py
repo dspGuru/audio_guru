@@ -339,16 +339,22 @@ class Components(list[Component]):
             New Components instance whose components characterize the
             frequency response within the specified bands.
         """
+        # Calculate octave-spaced band edges using sqrt(2) factor
         sqrt2 = 2.0**0.5
         bands = Components(self.md)
+
+        # Process each center frequency to create a band
         for center in centers:
             low = center / sqrt2
             high = center * sqrt2
+
+            # Collect components within this band's frequency range
             components = Components(self.md)
             for component in self:
                 if low <= component.freq <= high:
                     components.append(component)
 
+            # Append a band component from the average of components in range
             band = components.average()
             band.freq = center
             band.lower_freq = low
@@ -463,7 +469,7 @@ class Components(list[Component]):
         if ref_pwr <= 0.0:
             ref_pwr = MIN_PWR
 
-        print(self.md.segment.desc)
+        print(str(self.md))
         print(f"{self.name} ({len(self)} found)")
         print("----------------------------------------")
 

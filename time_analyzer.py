@@ -3,7 +3,6 @@
 from analyzer import Analyzer
 from audio import Audio
 from component import Component, Components
-from segment import Segment
 from time_stats import TimeStats
 
 
@@ -17,16 +16,7 @@ class TimeAnalyzer(Analyzer):
             Audio data to analyze.
     """
 
-    def __init__(self, audio: Audio):
-        """
-        Initialize the time analyzer.
-
-        Parameters
-        ----------
-        audio : Audio
-            Audio data to analyze.
-        """
-        super().__init__(audio)
+    # Note: __init__() is inherited from super class
 
     # @override
     def reset(self) -> None:
@@ -49,23 +39,16 @@ class TimeAnalyzer(Analyzer):
         return self.components
 
     # @override
-    def analyze(self, segment: Segment | None = None) -> TimeStats:
+    def analyze(self) -> TimeStats:
         """
-        Abstract method to calculate and return statistics from audio analysis.
-
-        Parameters
-        ----------
-        Parameters
-        ----------
-        segment : Segment | None
-            Segment of audio to analyze. If None, use the entire audio.
+        Calculate and return time-domain statistics.
 
         Returns
         -------
         TimeStats
             Time-domain statistics.
         """
-        super().analyze(segment)  # Select segment and get time statistics
+        super().analyze()  # Gets time statistics
         self.analysis = self.time_stats
 
         return self.analysis

@@ -33,9 +33,7 @@ def test_metadata_basic_fields_and_fname_and_unit_id():
     # fields from split_pathname
     assert md.mfr == "Acme"
     assert md.model == "C123"
-    assert (
-        md.desc == "Test:1"
-    )  # remaining part becomes description, appended with segment id
+    assert md.desc == "Test:1"  # desc appended with segment id
 
     # fs forwarded from segment
     assert md.fs == fs
@@ -83,7 +81,7 @@ def test_len_and_set_and_desc_fallback():
     seg = Segment(fs, 0, 999)
     md = Metadata("NoUnderscore.wav", seg)
 
-    # for a pathname without underscores, mfr/model empty and desc is basename
+    # pathname without underscores -> mfr/model empty, desc is basename
     assert md.mfr == ""
     assert md.model == ""
     assert md.desc == pathlib.Path("NoUnderscore.wav").stem
@@ -96,3 +94,76 @@ def test_len_and_set_and_desc_fallback():
     assert md.mfr == "NewMfr"
     assert md.model == "NewModel"
     assert md.desc == "NewDesc"
+
+
+def test_metadata_name_property():
+    """Test Metadata name property gets and sets pathname."""
+    fs = 48000.0
+    seg = Segment(fs, 0, 999)
+    md = Metadata("Original_Mfr_Model.wav", seg)
+
+    # name property returns pathname
+    assert md.name == "Original_Mfr_Model.wav"
+    assert md.name == md.pathname
+
+    # Setting name updates pathname and re-splits
+    md.name = "NewMfr_NewModel_NewDesc.wav"
+    assert md.pathname == "NewMfr_NewModel_NewDesc.wav"
+    assert md.mfr == "NewMfr"
+    assert md.model == "NewModel"
+    assert md._desc == "NewDesc"
+
+
+def test_metadata_info_is_source_info():
+    """Test that Metadata.info is a SourceInfo instance."""
+    from metadata import SourceInfo
+
+    seg = Segment(48000.0, 0, 100)
+    md = Metadata("test.wav", seg)
+
+    assert isinstance(md.info, SourceInfo)
+    assert isinstance(md.info, dict)
+
+
+def test_source_info_inherits_from_dict():
+    """Test SourceInfo is a dict subclass."""
+    from metadata import SourceInfo
+
+    info = SourceInfo({"title": "Test", "artist": "Artist"})
+
+    assert isinstance(info, dict)
+    assert info["title"] == "Test"
+    assert info["artist"] == "Artist"
+
+
+def test_source_info_update():
+    """Test SourceInfo supports dict update."""
+    from metadata import SourceInfo
+
+    info = SourceInfo({})
+    info.update({"title": "New Title", "album": "New Album"})
+
+    assert info["title"] == "New Title"
+    assert info["album"] == "New Album"
+
+
+def test_source_info_set_sf_metadata_converts_types():
+    """Test set_sf_metadata converts non-string values to strings."""
+    import unittest.mock
+    from metadata import SourceInfo
+
+    # Create info with integer value
+    info = SourceInfo({"tracknumber": 1, "title": "Test Track"})
+
+    mock_sf = unittest.mock.Mock()
+    mock_sf.info_fields = (
+        SourceInfo.info_fields
+    )  # Ensure fields are available if needed or iterated
+
+    # The method iterates SourceInfo.info_fields and checks if they are in 'info'
+    # Then calls setattr(mock_sf, field, str(value))
+    info.set_sf_metadata(mock_sf)
+
+    # Verify conversions
+    assert getattr(mock_sf, "tracknumber") == "1"
+    assert getattr(mock_sf, "title") == "Test Track"

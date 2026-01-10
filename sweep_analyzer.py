@@ -8,7 +8,6 @@ from audio import Audio
 from component import Component, Components
 from constants import EQ_BANDS, MIN_PWR, REF_FREQ
 from freq_resp import FreqResp
-from segment import Segment
 from util import Category
 
 
@@ -54,6 +53,7 @@ class SweepAnalyzer(Analyzer):
         Components
             List of components.
         """
+        # Initialize components
         components = Components(self.audio.md)
 
         # Use the short-time Fourier transform (STFT) to analyze the sweep
@@ -85,43 +85,42 @@ class SweepAnalyzer(Analyzer):
         )
         mags = np.abs(z)
 
+        # Process each time frame in the STFT output
         components = Components(self.audio.md)
         eps = MIN_PWR
         for i in range(mags.shape[1]):
+            # Get magnitude column for this time frame
             col = mags[:, i]
             if np.all(col <= eps):
                 continue
+
+            # Find peak frequency bin and compute power
             idx = int(np.argmax(col))
             freq_hz = float(f[idx])
-            pwr = float(np.sum(np.abs(col) ** 2.0))  # power in this frame
+            pwr = float(np.sum(np.abs(col) ** 2.0))  # total power in this frame
             secs = float(t[i])
 
-            # If the frequency is greater than 1 Hz, append the frequency bin
-            # as a component
+            # Skip DC and very low frequencies
             if freq_hz > 1.0:
                 component = Component(freq_hz, pwr, secs, Category.Tone)
                 components.append(component)
 
-        # Combine consecutive duplicate frequency entries (common for long frames)
+        # Combine consecutive duplicate frequency entries (common for long
+        # frames)
         components.combine()
         components.name = "Sweep Components"
         self.components = components
         return self.components
 
     # @override
-    def analyze(self, segment: Segment | None = None) -> FreqResp:
+    def analyze(self) -> FreqResp:
         """Get sweep statistics for frequency bands.
-
-        Parameters
-        ----------
-        segment : Segment | None
-            Segment of audio to analyze. If None, use the entire audio.
 
         Returns
         -------
         Frequency bands as Components
         """
-        super().analyze(segment)
+        super().analyze()
 
         # If no components were found, create a dummy component to allow
         # FreqResp to be created
@@ -144,11 +143,15 @@ class SweepAnalyzer(Analyzer):
         ref_freq : float | None
             Reference frequency for normalization. If None, use self.ref_freq.
         """
+        # Get reference frequency
         if ref_freq is None:
             ref_freq = self.ref_freq
+
+        # Get bands
         bands = self.components.get_bands(centers)
         bands.normalize_pwr(ref_freq)
         bands.name = "Bands"
+
         return bands
 
     # @override

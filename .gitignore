@@ -134,3 +134,4 @@ dmypy.json
 # Audio Guru specific ignores
 ref/
 *.wav
+nul

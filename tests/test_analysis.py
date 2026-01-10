@@ -15,12 +15,12 @@ class DummyAnalysis(Analysis):
 
 
 def test_analysis_import():
-    # Verify Analysis is importable and is a class
+    """Verify that the Analysis base class is correctly importable."""
     assert isinstance(Analysis, type)
 
 
 def test_cannot_instantiate_abstract():
-    # Abstract base class cannot be instantiated
+    """Ensure that the abstract Analysis class cannot be instantiated directly."""
     with pytest.raises(TypeError):
         Analysis()
 

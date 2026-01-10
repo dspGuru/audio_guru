@@ -9,13 +9,14 @@ from constants import DEFAULT_FS
 from decibels import db
 from generate import noise
 from noise_analyzer import NoiseAnalyzer
+from util import Channel
 
 
-def test_noise_analyzer_with_example_file(examples_dir):
+def test_noise_analyzer_with_example_file(signals_dir):
     # Load example noise file
-    fname = examples_dir / "test_noise.wav"
+    fname = signals_dir / "13-test_noise.wav"
     if not fname.exists():
-        pytest.skip("test_noise.wav not found in examples")
+        pytest.skip("13-test_noise.wav not found in signals")
 
     # Read audio from file
     audio = Audio()
@@ -34,22 +35,23 @@ def test_noise_analyzer_with_example_file(examples_dir):
     # Test analyze() (returns bands on EQ centers)
     assert len(bands) > 0
 
-    # Standard bands (EQ_BANDS) len is usually fixed (e.g. 31 or 10 or similar
-    # ISO bands). Verify we got reasonable power values (not -inf everywhere).
+    # Standard bands len is fixed. Verify reasonable power values.
     assert any(b.pwr > 0 for b in bands)
     assert bands.name == "Noise Bands"
 
 
 def test_noise_analyzer_with_filtered_noise():
-    # Create noise
-    audio = noise()
+    # Create noise (Left channel output is 2D stereo, extract left for filtering)
+    audio = noise(channel=Channel.Left)
+    left_channel = audio.samples[:, 0].copy()
 
-    # Filter noise
+    # Filter the 1D left channel
     numtaps = 200
     cutoff = [1000, 10000]
     fs = DEFAULT_FS
     coeffs = signal.firwin(numtaps, cutoff=cutoff, fs=fs, pass_zero=False)
-    audio.filter(coeffs)
+    filtered = signal.convolve(left_channel, coeffs, mode="same")
+    audio.samples = filtered
 
     # Initialize analyzer
     analyzer = NoiseAnalyzer(audio)
@@ -106,24 +108,24 @@ def test_reset():
 def test_filtered_noise_response():
     """Verify that a filtered noise matches the expected bandpass filter response."""
     # Generate filtered noise exactly as in generate.py
-    # Filter is 4th order Butterworth bandpass from 300Hz to 3000Hz
+    # Filter is 4th order Butterworth bandpass from 300 Hz to 3000 Hz
     import scipy.signal as scipy_signal
 
     fs = 48000
     secs = 2.0
-    audio = noise(secs=secs, fs=fs)
+    # Create noise (Left channel output is 2D stereo)
+    audio = noise(secs=secs, fs=fs, channel=Channel.Left)
+    left_channel = audio.samples[:, 0].copy()
 
     sos = scipy_signal.butter(4, [300, 3000], btype="bandpass", fs=fs, output="sos")
-    audio.samples = scipy_signal.sosfilt(sos, audio.samples).astype(audio.DTYPE)
+    filtered = scipy_signal.sosfilt(sos, left_channel).astype(audio.DTYPE)
+    audio.samples = filtered
 
     analyzer = NoiseAnalyzer(audio)
     analysis = analyzer.analyze()  # Returns bands on ISO/EQ centers
     bands = analysis.bands
 
-    # We expect high power in passband (300 Hz-3 kHz)
-    # We expect low power in stopbands (<300 Hz, >3 kHz)
-
-    # Identify passband bands
+    # Expect high power in passband (300 Hz-3 kHz), low power in stopbands
     passband_centers = [
         f for f in [315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500]
     ]
@@ -145,15 +147,10 @@ def test_filtered_noise_response():
 
     assert pass_pwr > 0
 
-    # Check signal-to-noise ratio between passband and stopbands
-    # We expect significant attenuation.
-    # With white noise, power is distributed. Filter removes outside power.
-    # In dB:
+    # Expect >12 dB difference for 4th order filter
     pass_db = db(pass_pwr)
     stop_low_db = db(stop_low_pwr)
     stop_high_db = db(stop_high_pwr)
-
-    # Expect > 12 dB difference typically for 4th order
     assert (
         pass_db - stop_low_db
     ) > 12.0, f"Expected > 12 dB attenuation low, got {pass_db - stop_low_db:.1f} dB"

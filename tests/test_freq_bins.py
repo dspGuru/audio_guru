@@ -17,7 +17,7 @@ class TestFreqBins:
         samples = np.sin(2 * np.pi * DEFAULT_FREQ * t).astype(np.float32)
         md = Metadata("test", Segment(fs, 0, 999))
 
-        bins = FreqBins(samples, md, Channel.Mean)
+        bins = FreqBins(samples, md, Channel.Stereo)
 
         assert bins.bins is not None
         assert len(bins) > 0
@@ -31,14 +31,11 @@ class TestFreqBins:
         samples = 0.5 * np.sin(2 * np.pi * DEFAULT_FREQ * t).astype(np.float32)
         md = Metadata("test", Segment(fs, 0, 4095))
 
-        bins = FreqBins(samples, md, Channel.Mean)
-        tones = bins.get_tones(max_components=1)
+        bins = FreqBins(samples, md, Channel.Stereo)
+        tones = bins.tones[:1]
 
         assert len(tones) == 1
         assert tones[0].freq == pytest.approx(DEFAULT_FREQ, abs=fs / len(t))
-        # Within bin resolution?
-        # Actually FreqBins usually does interpolation or peak finding.
-        # Let's hope it's accurate.
 
     def test_is_sine(self):
         # Create a sine wave
@@ -71,7 +68,7 @@ class TestFreqBins:
 
         # Test Left
         bins_l = FreqBins(stereo, md, Channel.Left)
-        # 1000 samples, amp=1.0. With windowing, peak power > 0.01 is conservative enough.
+        # With windowing, peak power > 0.01
         assert bins_l.max > 0.01
 
         # Test Right
@@ -79,7 +76,7 @@ class TestFreqBins:
         assert bins_r.max < 1e-4
 
         # Test Mean
-        bins_m = FreqBins(stereo, md, Channel.Mean)
+        bins_m = FreqBins(stereo, md, Channel.Stereo)
         assert bins_m.max > 0.003
         assert bins_m.max < bins_l.max
 
@@ -116,7 +113,6 @@ class TestFreqBins:
         # Check ripple spanning both peaks
         r = bins.ripple(50, 250)
         assert r > 0
-        # Should be roughly max peak - noise floor (or min valley between peaks)
 
     def test_band_edges(self):
         fs = DEFAULT_FS
@@ -203,18 +199,14 @@ class TestFreqBins:
 
         # Test Difference
         bins_diff = FreqBins(samples, md, Channel.Difference)
-        # DC removed in init, so bins might be small if signal is const DC.
-        # But we check that it runs through the case logic.
+        # DC removed in init; verify channel case logic runs
         assert bins_diff.channel == Channel.Difference
 
         # Test Unknown channel -> defaults to Mean
         bins_unk = FreqBins(samples, md, Channel.Unknown)
         assert bins_unk.channel == Channel.Unknown
 
-        # Test 1D array passed but Channel asked for Left/Right?
-        # FreqBins init:
-        # if x.ndim > 1: switch channel... else: channel = Unknown
-        # So passing 1D array sets channel to Unknown
+        # 1D array sets channel to Unknown
         samples_1d = np.ones(100, dtype=np.float32)
         bins_1d = FreqBins(samples_1d, md, Channel.Left)
         assert bins_1d.channel == Channel.Unknown
@@ -225,25 +217,7 @@ class TestFreqBins:
         md = Metadata("test", Segment(fs, 0, 99))
         bins = FreqBins(samples, md)
 
-        # Bin range out of bounds?
-        # mean() checks: bin2 > bin1 and bin1 >= 0 and bin2 < len(self.bins)
-        # if fail -> raise ValueError
-        # len(bins) is 51 (for 100 samples rfft)
-
-        # Case: bin2 <= bin1 (swapped internally so ok)
-        # Case: bin start/stop outside range
-        # internal logic handles ordering.
-        # Validation failure happens if indices remain outside valid range after logic?
-        # Actually logic is:
-        # if valid: return mean
-        # elif partial valid: return bin value?
-        # else: raise
-
-        # We need frequencies that map to < 0 or > len.
-        # freq_to_bin clamps? No, round(freq / (fs*0.5) * len).
-        # freq=-10 -> raises ValueError (added robustness).
-        # freq=10000 -> bin > len.
-
+        # freq_to_bin: freq=-10 raises; freq=10000 -> bin > len
         with pytest.raises(ValueError, match="Frequency range is out of bounds"):
             bins.mean(10000, 20000)
 
@@ -253,13 +227,7 @@ class TestFreqBins:
         md = Metadata("test", Segment(fs, 0, 99))
         bins = FreqBins(samples, md)
 
-        # All bins zero (or very close). Max val small.
-        # Threshold usually max * something.
-        # If absolute silence, bins are 0?
-        # If we effectively have no bins above threshold?
-        # tol_db very small? or very large check?
-
-        # Force empty above_threshold logic by mocking bins to all -100 (if log) or 0
+        # Force empty above_threshold logic
         bins.bins[:] = 0.0
         edges = bins.get_band_edges(tol_db=3.0)
         assert edges == (0.0, 0.0)
@@ -269,11 +237,10 @@ class TestFreqBins:
         samples = np.zeros(100, dtype=np.float32)
         md = Metadata("test", Segment(fs, 0, 99))
         bins = FreqBins(samples, md)
-        # mock get_tones to return empty
-
-        with unittest.mock.patch.object(bins, "get_tones", return_value=[]):
-            assert bins.is_noise() is True
-            assert bins.is_sine() is False
+        # Mock tones to be empty
+        bins.tones = []
+        assert bins.is_noise() is True
+        assert bins.is_sine() is False
 
     def test_freq_in_list_edge_cases(self):
         fs = 1000

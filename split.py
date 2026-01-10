@@ -1,7 +1,8 @@
+#!/usr/bin/env python3
+
 """Splits audio into segments."""
 
-import argparse
-import glob
+import argparse, glob
 
 from audio import Audio
 
@@ -45,14 +46,14 @@ def split_file(pathname: str) -> list[str]:
         # No extension found, append suffix to original name
         base_fname = pathname
 
-    for i, segment in enumerate(audio):
-        print(segment.desc)
+    for i, audio_segment in enumerate(audio):
+        print(audio_segment.segment.desc)
         out_fname = f"{base_fname}_{i+1}.wav"
         if base_fname == pathname:
             # Ensure distinct name if original had no extension
             out_fname = f"{pathname}_{i+1}.wav"
 
-        audio.write(out_fname)
+        audio_segment.write(out_fname)
         print(f"Wrote segment {i+1} to '{out_fname}'")
         out_fnames.append(out_fname)
 

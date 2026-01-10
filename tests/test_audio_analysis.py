@@ -4,15 +4,13 @@ from constants import DEFAULT_FS, DEFAULT_FREQ
 from unit_stats import UnitStats
 from util import Category
 
-# Note: The codebase seems to lack a direct 'Audio -> UnitStats' converter.
-# We will simulate the analysis process using Audio methods to verify
-# that if we feed correct data to UnitStats, it works, AND that Audio calculates things correctly.
+# Simulate analysis process using Audio methods to verify UnitStats integration.
 
 
 class TestAudioAnalysis:
 
-    def test_tone_1k_analysis(self, examples_dir):
-        fname = examples_dir / "test_tone_1k.wav"
+    def test_tone_1k_analysis(self, signals_dir):
+        fname = signals_dir / "05-test_tone_1k.wav"
         assert fname.exists()
 
         audio = Audio()
@@ -23,26 +21,21 @@ class TestAudioAnalysis:
         assert len(audio) > 0
 
         # Verify Frequency
-        assert audio.freq == pytest.approx(DEFAULT_FREQ, abs=5.0)  # +/- 5Hz tolerance
+        assert audio.freq == pytest.approx(DEFAULT_FREQ, abs=5.0)  # +/- 5 Hz tolerance
 
         # Calculate Stats manually to verify UnitStats integration
         stats = UnitStats("Sine1k")
         stats.noise_floor = audio.get_noise_floor()[0]
-        # THD not directly exposed as property, would need Analyzer.
-        # But we can verify noise floor is low for a pure sine.
-        # stats.thd = ...
-
-        # Verify printed specs for this file
+        # Verify noise floor is low for pure sine
         stats.print_specs()
         # (This is mostly a smoke test to ensure no crash on real data)
 
-    def test_sweep_analysis(self, examples_dir):
-        fname = examples_dir / "test_sweep.wav"
+    def test_sweep_analysis(self, signals_dir):
+        fname = signals_dir / "12-test_sweep.wav"
         audio = Audio()
         audio.read(fname)
 
-        # is_sweep on the whole file fails due to appended silence causing freq drop
-        # We limit the selection to the active sweep part (first 5 seconds)
+        # Select active sweep part (first 4.8s) to avoid appended silence
         from segment import Segment
 
         audio.select(
@@ -50,27 +43,26 @@ class TestAudioAnalysis:
                 fs=audio.fs, start=0, stop=int(4.8 * audio.fs), id=1, cat=Category.Sweep
             )
         )
-        assert audio.get_category() == Category.Sweep
+        assert audio.cat == Category.Sweep
 
-    def test_noise_analysis(self, examples_dir):
-        fname = examples_dir / "test_noise.wav"
+    def test_noise_analysis(self, signals_dir):
+        fname = signals_dir / "13-test_noise.wav"
         audio = Audio()
         audio.read(fname)
 
-        assert audio.get_category() == Category.Noise
+        assert audio.cat == Category.Noise
 
-        # Noise floor might be 0.0 due to appended digital silence
+        # Noise floor might be 0.0 due to digital silence appended
         nf, idx = audio.get_noise_floor()
         assert nf >= 0.0
 
     def test_distortion_file(self, examples_dir):
-        # test_tone_1k-1_000_pct.wav -> 1% THD
-        fname = examples_dir / "test_tone_1k-1-000-pct.wav"
+        # example_tone_1k-1_000_pct.wav -> 1% THD
+        fname = examples_dir / "example_tone_1k-1-000-pct.wav"
         audio = Audio()
         assert audio.read(fname)
 
         assert audio.freq == pytest.approx(DEFAULT_FREQ, abs=5.0)
 
-        # We can't easily calculate THD without using the proper Analyzer or reproducing logic.
-        # But we can ensure it loads and is categorized as Tone.
-        assert audio.get_category() == Category.Tone
+        # Verify it loads and is categorized as Tone
+        assert audio.cat == Category.Tone

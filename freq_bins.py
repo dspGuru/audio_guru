@@ -1,6 +1,7 @@
 """Audio Frequency Bins Class"""
 
 from copy import copy
+from functools import cached_property
 
 import numpy as np
 from scipy.fft import rfft
@@ -14,8 +15,25 @@ from util import alias_freq, Category, Channel
 
 __all__ = ["FreqBins"]
 
+# Module-level cache for window functions by (length, symmetry)
+_window_cache: dict[tuple[int, bool], np.ndarray] = {}
 
-def blackmanharris7(M, sym=True):
+# Seven-term minimum sidelobe Blackman-Harris coefficients from reference
+BH7_COEFFS = np.asarray(
+    [
+        0.271051400693424,
+        0.433297939234485,
+        0.21812299954311,
+        0.06592544638803099,
+        0.010811742098371,
+        0.000776584825226,
+        0.000013887217352,
+    ],
+    dtype=np.float32,
+)
+
+
+def blackmanharris7(M: int, sym: bool = True) -> np.ndarray:
     """Return a minimum 7-term Blackman-Harris window.
 
     Parameters
@@ -40,19 +58,17 @@ def blackmanharris7(M, sym=True):
     Computations", IEEE Transactions on Instrumentation and Measurement,
     April 1994, vol. 43, pp 194-199, by O. M. Solomon, Jr.
     """
-    a = np.asarray(
-        [
-            0.271051400693424,
-            0.433297939234485,
-            0.21812299954311,
-            0.06592544638803099,
-            0.010811742098371,
-            0.000776584825226,
-            0.000013887217352,
-        ],
-        dtype=np.float64,
-    )
-    return signal.windows.general_cosine(M, a, sym=sym)
+    # Check cache first
+    cache_key = (M, sym)
+    if cache_key in _window_cache:
+        return _window_cache[cache_key]
+
+    # Calculate window
+    w = signal.windows.general_cosine(M, BH7_COEFFS, sym=sym)
+
+    # Cache and return
+    _window_cache[cache_key] = w
+    return w
 
 
 class FreqBins:
@@ -103,15 +119,16 @@ class FreqBins:
         self.dc = 0.0
         self.noise = 0.0
 
-        # Get audio and convert multi-channel audio to mono as needed
-        x = copy(samples)
+        # Get audio and convert multi-channel audio to mono as needed. Use a
+        # view where possible to avoid redundant copying.
+        x = np.asarray(samples)
         if x.ndim > 1:
             match self.channel:
                 case Channel.Left:
                     x = x[:, 0]
                 case Channel.Right:
                     x = x[:, 1]
-                case Channel.Mean:
+                case Channel.Stereo:
                     x = np.mean(x, axis=1)
                 case Channel.Difference:
                     x = x[:, 0] - x[:, 1]
@@ -125,13 +142,18 @@ class FreqBins:
 
         # Calculate DC and remove it
         self.dc = float(np.mean(x))
-        x -= self.dc
+        if self.dc != 0.0:
+            # Create a copy only if we need to modify x and it's a view
+            if x.base is not None or not x.flags.writeable:
+                x = x - self.dc
+            else:
+                x -= self.dc
 
         # Window the signal
         w = blackmanharris7(len(x))
         xw = x * w
 
-        # Compute normalized real FFT
+        # Compute normalized real FFT and convert to power spectral density
         yf = rfft(xw, norm="forward")
         self.bins = (yf * yf.conjugate()).real
 
@@ -144,12 +166,12 @@ class FreqBins:
         """Return the sampling frequency in Hz."""
         return self.md.fs
 
-    @property
+    @cached_property
     def max(self) -> float:
         """Return the maximum value of the selected audio."""
         return float(np.max(self.bins)) if len(self) else 0.0
 
-    @property
+    @cached_property
     def min(self) -> float:
         """Return the minimum value of the selected audio."""
         return float(np.min(self.bins)) if len(self) else 0.0
@@ -259,7 +281,9 @@ class FreqBins:
         """
         bands = Components(self.md)
 
-        sqrt2 = 2**0.5
+        # Calculate octave-spaced frequency bands (1/sqrt(2) to sqrt(2) range
+        # around center)
+        sqrt2 = 2.0**0.5
         for center in centers:
             lower = center / sqrt2
             upper = min(center * sqrt2, 0.5 * self.fs)
@@ -285,10 +309,13 @@ class FreqBins:
         """
         components = Components(self.md)
 
+        # Divide frequency range into equal-width bands from zero to Nyquist
         low_freq = 0.0
         nyquist = 0.5 * self.fs
         step = nyquist / max_components
         high_freq = step - 1
+
+        # Iterate through each frequency band and compute its mean power
         while low_freq < nyquist:
             freq = 0.5 * (low_freq + high_freq)
             pwr = self.mean(low_freq, high_freq)
@@ -299,16 +326,10 @@ class FreqBins:
 
         return components
 
-    def get_tones(self, max_components: int = MAX_TONES) -> Components:
+    @cached_property
+    def tones(self) -> Components:
         """
         Find the audio's components, DC, and noise.
-
-        Parameters
-        ----------
-        w_tol : int
-            Tolerance for component detection, in bins.
-        max_components : int
-            Maximum number of components to identify.
 
         Returns
         -------
@@ -319,62 +340,85 @@ class FreqBins:
 
         # Get absolute value of bins
         bins = np.absolute(self.bins)
+        n_bins = len(bins)
 
-        # Get components
-        last_bin = len(bins) - 1
-        while len(tones) < max_components:
-            center = int(np.where(bins == bins.max())[0][0])
+        # Use scipy.signal.find_peaks to find all peaks
+        peaks, _ = signal.find_peaks(bins)
+        if len(peaks) == 0:
+            self.noise = float(np.sum(bins))
+            return tones
 
-            # Find the first bin, which is the first before the center which
-            # has monotonically decreasing power
-            first = center
-            while first > 0 and bins[first - 1] <= bins[first]:
-                first -= 1
+        # Pre-compute frequency scale once (avoids repeated bin_to_freq calls)
+        freq_scale = self.fs / self.n_samples
+        all_freqs = np.arange(n_bins) * freq_scale
 
-            # Find the last bin, which is the last after the center which has
-            # monotonically decreasing power
-            last = center
-            while last < last_bin and bins[last + 1] <= bins[last]:
-                last += 1
-            last += 1
+        # Get peak values and sort by power (descending), take top MAX_TONES
+        peak_values = bins[peaks]
+        n_top = min(MAX_TONES, len(peaks))
+        # Use argpartition for efficient partial sorting of top peaks
+        top_indices = np.argpartition(peak_values, -n_top)[-n_top:]
+        top_indices = top_indices[np.argsort(peak_values[top_indices])[::-1]]
+        sorted_peaks = peaks[top_indices]
 
-            # If the number of bins spanned is greater than MAX_BINS_PER_TONE,
-            # limit the span to MAX_BINS_PER_TONE, with clipping at the edges
+        # Pre-compute gradient change indices to vectorize monotonic bound detection
+        # valley_left: where bins decrease (potential left tone boundary)
+        # valley_right: where bins increase (potential right tone boundary)
+        diffs = np.diff(bins)
+        valley_left = np.where(diffs < 0)[0]
+        valley_right = np.where(diffs > 0)[0]
+
+        # Batch find monotonic bounds for all peaks using binary search
+        left_indices = np.searchsorted(valley_left, sorted_peaks)
+        right_indices = np.searchsorted(valley_right, sorted_peaks)
+
+        # Process top MAX_TONES peaks with pre-computed bounds
+        last_bin = n_bins - 1
+        for i, center in enumerate(sorted_peaks):
+            center = int(center)
+
+            # Left bound: find where bins begin decreasing toward center
+            l_idx = left_indices[i]
+            first = int(valley_left[l_idx - 1] + 1) if l_idx > 0 else 0
+
+            # Right bound: find where bins begin increasing away from center
+            r_idx = right_indices[i]
+            last = int(valley_right[r_idx]) if r_idx < len(valley_right) else last_bin
+
+            # Ensure right bound extends past center and is valid
+            last = max(center + 1, last + 1)
+
+            # Limit span to MAX_BINS_PER_TONE
             if last - first > MAX_BINS_PER_TONE:
-                first = max(0, center - MAX_BINS_PER_TONE // 2)
-                last = min(last_bin + 1, center + MAX_BINS_PER_TONE // 2)
+                half = MAX_BINS_PER_TONE // 2
+                first = max(0, center - half)
+                last = min(last_bin + 1, center + half)
 
-            # Calculate the center frequency as power-weighted average of the
-            # tone's bins
-            weighted_sum = 0.0
-            total_power = 0.0
-            for bin in range(first, last):
-                bin_freq = self.bin_to_freq(bin)
-                bin_pwr = bins[bin]
-                weighted_sum += bin_freq * bin_pwr
-                total_power += bin_pwr
-            freq = weighted_sum / total_power if total_power > 0 else freq
-
-            # Calculate the power of the tone as the sum of the tone's bins
-            pwr = float(sum(bins[first:last]))
+            # Calculate power-weighted centroid frequency for better accuracy
+            bin_pwrs = bins[first:last]
+            total_power = bin_pwrs.sum()
+            if total_power > 0:
+                # Weighted average: sum(freq * power) / sum(power)
+                freq = float((all_freqs[first:last] * bin_pwrs).sum() / total_power)
+            else:
+                freq = all_freqs[center]
 
             # Create tone component
             tone = Component(
                 freq,
-                pwr,
+                float(total_power),
                 0.0,
                 Category.Tone,
-                self.bin_to_freq(first),
-                self.bin_to_freq(last),
+                all_freqs[first],
+                all_freqs[last] if last < n_bins else all_freqs[-1],
             )
 
-            # Set the tone's bins to zero to exclude them from the noise
-            # calculation below
+            # Zero out tone bins for noise calculation
             bins[first:last] = 0.0
             tones.append(tone)
 
         # Get noise as the sum of the remaining non-tone bins
-        self.noise = sum(bins)
+        self.noise = float(bins.sum())
+
         return tones
 
     def is_noise(self, threshold_db: float = 10.0) -> bool:
@@ -392,16 +436,16 @@ class FreqBins:
             True if the audio is noise.
         """
         # Get tones
-        tones = self.get_tones()
+        tones = self.tones
 
         # If no components found, it is noise
         if not tones:
             return True
 
-        # Get power of largest component
+        # Peak tone power is the first element (tones are sorted by power)
         max_comp_pwr = tones[0].pwr
 
-        # Calculate average tone power excluding the largest component
+        # Compare peak to average of remaining tones to assess signal dominance
         avg_tone_pwr = sum([tone.pwr for tone in tones]) / (len(tones) - 1)
         snr_db = db(max_comp_pwr / avg_tone_pwr)
 
@@ -430,20 +474,20 @@ class FreqBins:
         using this function.
         """
         # Get components
-        tones = self.get_tones()
+        tones = self.tones
 
         # If no components found, it is not a sine wave
         if not tones:
             return False
 
-        # Get power of largest component
+        # Peak tone power determines signal strength
         max_comp_pwr = tones[0].pwr if tones else 0.0
 
-        # If no noise, it is a sine wave
+        # Pure tone with negligible noise floor confirms sine wave
         if self.noise <= MIN_PWR:
             return True
 
-        # Calculate SNR in dB
+        # Compare tone component power-to-noise ratio (signal-to-noise ratio)
         snr_db = db(max_comp_pwr / self.noise)
 
         # Return True if SNR is within tolerance
@@ -479,17 +523,22 @@ class FreqBins:
         bool
             True if the frequency is in the list (within tolerance).
         """
-
         # Return False if any input is invalid
         if freq <= 0.0 or not freq_list:
             return False
 
-        # Check if frequency is within tolerance of any frequency in the list
+        # Return True if frequency is within tolerance of any frequency in the
+        # list
         for target_freq in freq_list:
+            # Handle aliasing (frequencies folded back at Nyquist)
             target_freq = alias_freq(target_freq, self.fs)
-            bin_diff = self.freq_to_bin(abs(freq - target_freq))
-            if bin_diff <= bins_per_component:
-                return True  # frequency is in the list
 
-        # Frequency not found in the list: return False
+            # Calculate bin difference
+            bin_diff = self.freq_to_bin(abs(freq - target_freq))
+
+            # Return True if frequency is within tolerance of any frequency in the list
+            if bin_diff <= bins_per_component:
+                return True
+
+        # Frequency not found in the list
         return False

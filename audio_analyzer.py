@@ -2,13 +2,15 @@
 
 from dataclasses import dataclass
 import glob
+import queue
+import threading
 
 from analysis import Analysis
 from analysis_list import AnalysisList
 from audio import Audio
 from audio_stats import AudioStats
 from component import Components
-from constants import MIN_SEGMENT_SECS, MAX_SEGMENT_SECS
+from constants import SEGMENT_MAX_SECS
 from freq_resp import FreqResp
 from noise_analyzer import NoiseAnalysis
 from noise_analyzer import NoiseAnalyzer
@@ -55,7 +57,12 @@ class AudioAnalyzer:
         Category.Unknown: TimeAnalyzer,
     }
 
-    def __init__(self, max_segment_secs: float = MAX_SEGMENT_SECS) -> None:
+    def __init__(
+        self,
+        max_segment_secs: float = SEGMENT_MAX_SECS,
+        quiet: bool = False,
+        verbose: bool = False,
+    ) -> None:
         """
         Initialize the analyzer.
 
@@ -64,13 +71,16 @@ class AudioAnalyzer:
         max_segment_secs : float
             Maximum segment length in seconds. Default is 60 seconds.
         """
-        self.audio = Audio(name="Analyzer Audio")
+        self.audio = Audio(name="Analyzer Audio", max_segment_secs=max_segment_secs)
         self.analyzers: list[object] = []
         self.analysis_list = AnalysisList()
         self.results: dict[str, AudioAnalysis] = {}
         self.unit_ids: set[str] = set()
+        self.quiet = quiet
+        self.verbose = verbose
+        self._q: queue.Queue = queue.Queue()
 
-    def analyze(self, segment: Segment) -> AudioAnalysis | None:
+    def analyze(self, audio: Audio) -> AudioAnalysis | None:
         """
         Analyze the specified audio segment.
 
@@ -84,32 +94,20 @@ class AudioAnalyzer:
         AudioAnalysis | None
             Analysis results or None if analysis failed.
         """
-        if segment.secs < MIN_SEGMENT_SECS:
-            print(f"Segment {segment.desc} is too short to analyze")
-            return None
-
-        # Get the category of the audio segment if it is unknown
-        if segment.cat == Category.Unknown:
-            self.audio.select(segment)
-            segment.cat = self.audio.get_category()
-
-        # Select the segment in the audio object to update the segment's
-        # possible new category
-        self.audio.select(segment)
-
-        print(f"Analyzing segment: {segment.desc}")
+        if not self.quiet:
+            print(f"    Analyzing {audio.segment.desc}")
 
         # Get the analyzer class for the segment's category
-        analyzer_class = self.analyzer_classes.get(segment.cat)
+        analyzer_class = self.analyzer_classes.get(audio.segment.cat)
         if analyzer_class is None:
             return None
 
         # Create the analyzer
-        analyzer = analyzer_class(self.audio)
+        analyzer = analyzer_class(audio)
         self.analyzers.append(analyzer)
 
         # Analyze the segment
-        analysis = analyzer.analyze(segment)
+        analysis = analyzer.analyze()
         self.analysis_list.append(analysis)
 
         # Get segment time stats. Use the analysis result if it is a TimeStats
@@ -117,23 +115,66 @@ class AudioAnalyzer:
         if isinstance(analysis, TimeStats):
             time_stats = analysis
         else:
-            time_stats = TimeStats(self.audio)
+            time_stats = TimeStats(audio)
             self.analysis_list.append(time_stats)
+
+        if self.verbose:
+            time_stats.print()
 
         # Creat an audio analysis object to store the complete analysis results
         components = analyzer.components
-        audio_analysis = AudioAnalysis(segment, time_stats, analysis, components)
+        audio_analysis = AudioAnalysis(audio.segment, time_stats, analysis, components)
 
         # Store the analysis results in the results dictionary
-        key = f"{self.audio.name}:{segment}"
+        key = f"{audio.name}:{audio.segment}"
         self.results[key] = audio_analysis
 
         # Store the units analyzed
-        self.unit_ids.add(self.audio.md.unit_id)
+        self.unit_ids.add(audio.md.unit_id)
 
         return audio_analysis
 
-    def read(self, pattern: str) -> int:
+    def get_msg_queue(self) -> queue.Queue:
+        """
+        Get the message queue for audio segments to analyze.
+
+        Returns
+        -------
+        queue.Queue
+            Queue for audio analysis.
+        """
+        return self._q
+
+    def _analyze_worker(self, q: queue.Queue) -> None:
+        """
+        Worker thread to analyze audio segments from the queue.
+
+        Parameters
+        ----------
+        q : queue.Queue
+            Queue containing Audio segments to analyze.
+        """
+        while True:
+            audio = q.get()
+            if audio is None:
+                q.task_done()
+                break
+
+            if not hasattr(audio, "segment"):
+                print("Analyzing file: ", audio)
+                continue
+
+            try:
+                analysis = self.analyze(audio)
+                if analysis:
+                    self.analysis_list.append(analysis)
+            except Exception as e:
+                print(f"Error in analysis worker: {e}")
+                raise
+            finally:
+                q.task_done()
+
+    def read(self, pattern: str, quiet: bool = False) -> int:
         """
         Read and analyze the specified sample data files.
 
@@ -147,40 +188,51 @@ class AudioAnalyzer:
         int
             Number of files read successfully.
         """
-        num_read = 0
-        try:
-            fnames = glob.glob(pattern)
-            for fname in fnames:
-                self.audio = Audio(name=fname)
+        # Get the list of files matching the pattern
+        fnames = glob.glob(pattern)
+        if not fnames:
+            return 0
 
+        # Start the analysis worker thread
+        worker = threading.Thread(target=self._analyze_worker, args=(self._q,))
+        worker.start()
+
+        num_read = 0
+        for fname in fnames:
+            self.audio = Audio(name=fname)
+
+            # Print the file name if not quiet
+            if not quiet:
                 print(f"Reading {fname}")
 
-                # Read the audio file in blocks
-                num_blocks = 0
-                self.audio.open(fname)
+            # Read the audio file in blocks
+            num_blocks = 0
+            with self.audio.open(fname):
                 while self.audio.read_block():
                     num_blocks += 1
 
                     # Analyze each audio segment
-                    for segment in self.audio:
-                        self.analyze(segment)
-                        self.audio.remove(segment, True)
+                    for audio in self.audio:
+                        self._q.put(audio)
 
-                if num_blocks > 0:
-                    num_read += 1
-                else:
-                    continue
+            # If we read any blocks, increment the count. Otherwise, skip
+            # analysis below and continue to the next file.
+            if num_blocks > 0:
+                num_read += 1
+            else:
+                continue
 
-                # Get the audio statistics object and append it to the list
-                audio_stats = AudioStats(self.audio)
-                self.analysis_list.append(audio_stats)
+            # Get the audio statistics object and append it to the list
+            audio_stats = AudioStats(self.audio)
+            self.analysis_list.append(audio_stats)
 
-        except Exception as e:
-            print(f"Error reading audio file: {e}")
+        # Signal the worker to stop and wait for it to finish
+        self._q.put(None)
+        worker.join()
 
         return num_read
 
-    def read_device(self, duration: float = 0.0) -> bool:
+    def read_device(self, duration: float = 0.0, quiet: bool = False) -> bool:
         """
         Read and analyze audio from the default device.
 
@@ -192,13 +244,17 @@ class AudioAnalyzer:
         Returns
         -------
         bool
-            True if successful.
+            True if recording was successful, False otherwise.
         """
         try:
             self.audio = Audio(name="Device Input")
-            print("Reading from default audio device...")
+            if not quiet:
+                print("Reading from default audio device...")
 
-            self.audio.open_device()
+            # Start the analysis worker thread
+            q: queue.Queue = queue.Queue()
+            worker = threading.Thread(target=self._analyze_worker, args=(q,))
+            worker.start()
 
             # Calculate max blocks if duration is set
             max_blocks = None
@@ -207,49 +263,68 @@ class AudioAnalyzer:
                 # Since fs might trigger update of blocksize, ensure we use current values
                 max_blocks = int(duration * self.audio.fs / self.audio.blocksize) + 1
 
+            # Read the audio file in blocks
             num_blocks = 0
-            while self.audio.read_block():
-                num_blocks += 1
-                print(f".", flush=True, end="")
+            with self.audio.open_device(quiet=quiet):
+                while self.audio.read_block():
+                    num_blocks += 1
+                    if not quiet:
+                        print(f".", flush=True, end="")
 
-                # Analyze each audio segment
-                for segment in self.audio:
-                    print(f"Analyzing segment: {segment}", flush=True)
-                    analysis = self.analyze(segment)
-                    self.analysis_list.append(analysis)
-                    print(analysis.analysis.summary(), flush=True)
+                    # Analyze each audio segment
+                    for audio in self.audio:
+                        if not quiet:
+                            print(f"Analyzing {audio.segment}", flush=True)
+                        q.put(audio)
 
-                if max_blocks and num_blocks >= max_blocks:
-                    print(f"Reached maximum duration of {duration}s")
-                    break
+                    if max_blocks and num_blocks >= max_blocks:
+                        if not quiet:
+                            print(f"Reached maximum duration of {duration}s")
+                        break
 
-            self.audio.close()
+            # Signal worker to stop
+            q.put(None)
+            worker.join()
 
+            # If we read any blocks, get the audio statistics object, append it
+            # to the list and return True
             if num_blocks > 0:
-                # Get the audio statistics object and append it to the list
                 audio_stats = AudioStats(self.audio)
                 self.analysis_list.append(audio_stats)
                 return True
 
+            # No blocks were read
+            return False
+
         except KeyboardInterrupt:
             print("\nStopping recording...")
-            self.audio.close()
+            # Signal worker to stop
+            q.put(None)
+            worker.join()
+
+            # If we read any blocks, get the audio statistics object, append it
+            # to the list and return True
             if num_blocks > 0:
                 audio_stats = AudioStats(self.audio)
                 self.analysis_list.append(audio_stats)
                 self.print()
-            return True
+                return True
+
+            # No blocks were read
+            return False
 
         except Exception as e:
             print(f"Error reading device: {e}")
-            return False
+            raise
+
+        return bool(num_blocks > 0)
 
     def print(
         self,
         tone_sort_attr: str | None = "thd",
         time_sort_attr: str | None = "start",
-        components: bool = True,
-        noise_floor: bool = True,
+        components: int | None = 10,
+        audio_stats: bool = True,
     ) -> None:
         """
         Print the analysis results sorted on the specified statistic attribute.
@@ -260,16 +335,25 @@ class AudioAnalyzer:
             Name of the tone statistic attribute to sort by (default is 'thd').
         time_sort_attr : str | None
             Name of the time statistic attribute to sort by (default is 'start').
-        components : bool
-            Whether to print component details for each audio segment.
-        noise_floor : bool
-            Whether to print noise floor details for each audio segment.
+        components : int | None
+            Maximum number of components to print (default 10), or None to skip.
+        audio_stats : bool
+            Whether to print audio statistics for each audio source.
         """
+        print("\nAudio Analysis Results")
+        print("======================\n")
+
         # Print the audio statistics table if specified
-        if noise_floor:
+        if audio_stats:
             audio_stats_list = self.analysis_list.filtered(__class__=AudioStats)
             if audio_stats_list:
                 print(audio_stats_list.summary("noise_floor"))
+                print()
+
+        # Print component details if specified
+        if components is not None:
+            for _, analysis in self.results.items():
+                analysis.components.print(max_components=components)
                 print()
 
         # Print time statistics table if specified
@@ -281,7 +365,7 @@ class AudioAnalyzer:
 
         # Print noise frequency response statistics table
         noise_freq_resp_list = self.analysis_list.filtered(__class__=NoiseAnalysis)
-        if True:  # noise_freq_resp_list:
+        if noise_freq_resp_list:
             print(noise_freq_resp_list.summary("freq_resp.lower_edge"))
             print()
 

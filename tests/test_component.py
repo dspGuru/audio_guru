@@ -57,21 +57,21 @@ def test_to_dict_contains_expected_keys_and_values():
 
 def test_components_average_and_combine():
     comps = _make_components_container()
-    # two close-frequency components that should combine, and one distinct
+    # Two close-frequency components that should combine, and one distinct
     c1 = Component(freq=DEFAULT_FREQ, pwr=1.0, secs=0.1, cat=Category.Tone)
     c2 = Component(freq=DEFAULT_FREQ + 0.5, pwr=2.0, secs=0.2, cat=Category.Tone)
     c3 = Component(freq=3000.0, pwr=0.5, secs=0.3, cat=Category.Tone)
     comps.extend([c1, c2, c3])
 
-    # combine with tolerance 1 Hz should merge c1 and c2
+    # Combine with tolerance 1 Hz should merge c1 and c2
     comps.combine(freq_tol=1.0)
     assert len(comps) == 2
 
     merged = comps[0]
-    # Power-weighted mean: (1000*1.0 + 1000.5*2.0) / 3.0 = 3001/3 = 1000.333...
+    # Power-weighted mean
     expected_freq = (c1.freq * c1.pwr + c2.freq * c2.pwr) / (c1.pwr + c2.pwr)
     assert math.isclose(merged.freq, expected_freq, rel_tol=1e-6)
-    # power should be average of pwr values per implementation
+    # Power should be average
     assert math.isclose(merged.pwr, (1.0 + 2.0) / 2.0)
 
 
@@ -86,10 +86,10 @@ def test_find_index_and_find_freq_and_normalize_pwr():
     found = comps.find_freq(2000.0)
     assert found is c2
 
-    # normalize relative to 1000 Hz (becomes 1.0)
+    # Normalize relative to 1000 Hz (becomes 1.0)
     comps.normalize_pwr(ref_freq=DEFAULT_FREQ)
     assert math.isclose(comps[0].pwr, 1.0)
-    # other component scaled accordingly
+    # Other component scaled accordingly
     assert math.isclose(comps[1].pwr, 2.0)
 
 
@@ -136,10 +136,10 @@ def test_normalize_pwr_changes_values():
     comps.append(Component(2000.0, 4.0, 0.0, Category.Tone))
 
     comps.normalize_pwr(ref_freq=950.0)
-    # ref component should become 1.0
+    # Ref component should become 1.0
     ref = comps.find_freq(950.0)
     assert pytest.approx(ref.pwr, rel=1e-6) == 1.0
-    # other component scaled accordingly
+    # Other component scaled accordingly
     other = comps.find_freq(2000.0)
     assert pytest.approx(other.pwr, rel=1e-6) == 2.0
 
@@ -147,7 +147,7 @@ def test_normalize_pwr_changes_values():
 def test_get_bands_assigns_center_and_bounds():
     md = make_md()
     comps = Components(md)
-    # choose a center where sqrt2 window includes 900..1400 approx
+    # Choose a center where sqrt2 window includes 900..1400 approx
     comps.append(Component(950.0, 1.0, 0.0, Category.Tone))
     centers = (DEFAULT_FREQ,)
     bands = comps.get_bands(centers)
@@ -160,15 +160,13 @@ def test_get_bands_assigns_center_and_bounds():
 def test_band_edges_fallback_when_no_candidates():
     md = make_md()
     comps = Components(md)
-    # Add components with high power so target_pwr is lower and no candidates satisfy <= target
-    # Components range from 100 to 10000.
+    # Add high-power components so no candidates satisfy <= target
     comps.append(Component(100.0, 1000.0, 0.0, Category.Tone))
     comps.append(Component(DEFAULT_FREQ, 1000.0, 0.0, Category.Tone))
     comps.append(Component(10000.0, 1000.0, 0.0, Category.Tone))
 
     lower, upper = comps.band_edges(20.0, 20000.0, attn_db=3.0)
-    # With no candidates meeting the <= target_pwr condition, edges should default to
-    # the min/max observed frequencies, not the search range.
+    # No candidates meeting <= target_pwr -> edges default to min/max freqs
     assert lower == 100.0
     assert upper == 10000.0
 
@@ -218,9 +216,7 @@ def test_band_edges():
         comps.append(Component(freq=f, pwr=p))
 
     lower, upper = comps.band_edges(800, 1200, attn_db=3.0)
-    # -3dB is approx half power (0.5). Should be around 950 and 1050.
-    # Note: logic calculates avg power between edges first, then target.
-    # Logic in `band_edges` is a bit complex, we just verify it returns something within range.
+    # -3 dB is ~half power (0.5). Should be around 950 and 1050.
     assert 900 <= lower <= DEFAULT_FREQ
     assert DEFAULT_FREQ <= upper <= 1100
     assert lower < upper

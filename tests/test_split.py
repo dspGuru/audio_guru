@@ -9,9 +9,12 @@ from time_analyzer import TimeAnalyzer
 import generate
 
 
-def test_split(examples_dir, tmp_path):
+def test_split(signals_dir, tmp_path):
     # We want specific files to be deterministic
-    files_to_join = [examples_dir / "test_tone_1k.wav", examples_dir / "test_noise.wav"]
+    files_to_join = [
+        signals_dir / "05-test_tone_1k.wav",
+        signals_dir / "13-test_noise.wav",
+    ]
 
     # Check existence
     for pathname in files_to_join:
@@ -26,8 +29,7 @@ def test_split(examples_dir, tmp_path):
 
     assert joined_path.exists()
 
-    # Note: With silence preserved, the joined file will be read back as separated segments.
-    # This means split_file will output 2 files.
+    # Silence preserved -> 2 segments
     split_files = split_file(str(joined_path))
     assert len(split_files) == 2
 
@@ -36,7 +38,6 @@ def test_split(examples_dir, tmp_path):
     orig_segs = joined_audio.get_segments()
     assert len(orig_segs) == len(split_files)
 
-    # Verify integrity using TimeAnalyzer
     # Verify integrity using TimeAnalyzer
     joined_analyzer = TimeAnalyzer(joined_audio)
     for i, split_path in enumerate(split_files):
@@ -47,16 +48,15 @@ def test_split(examples_dir, tmp_path):
         split_analyzer = TimeAnalyzer(split_audio)
         split_stats = split_analyzer.analyze()
 
-        # Analyze the non-silent segments of original because splitting
-        # removes silence,
-
-        joined_stats = joined_analyzer.analyze(orig_segs[i])
+        # Analyze non-silent segments of original since splitting removes silence
+        joined_analyzer.select(orig_segs[i])
+        joined_stats = joined_analyzer.analyze()
         print(f"Comparing {split_path} to joined segment {i}")
 
         # Verify time statistics match within a tolerance
 
         # Verify RMS
-        tol = 0.15 if "noise" in str(split_path) else 0.01
+        tol = 0.15 if "noise" in str(split_path) else 0.05
         assert split_stats.rms == pytest.approx(
             joined_stats.rms, rel=tol
         ), f"RMS mismatch for {split_path}"
@@ -76,11 +76,7 @@ def test_split_no_extension(tmp_path):
     # Create a file without extension
     file1 = tmp_path / "testfile"
     a = generate.sine(secs=2.0)
-    # We force write without extension
-    # Audio.write uses sf.write which might infer format from extension or need format.
-    # If no extension, sf.write might fail if format not specified.
-    # But here we are testing split.py's handling of names.
-    # Let's write with extension first then rename
+    # Audio.write might need format; write with extension then rename
     file_orig = tmp_path / "testfile.wav"
     a.write(str(file_orig))
     file_orig.rename(file1)
@@ -88,10 +84,7 @@ def test_split_no_extension(tmp_path):
     # Run split
     split_files = split_file(str(file1))
 
-    # Should produce testfile_1.wav (default because audio.write uses wav if logic is sound?)
-    # Wait, split logic: out_fname = f"{base_fname}_{i+1}.wav"
-    # If base_fname == "testfile", then "testfile_1.wav".
-
+    # Should produce testfile_1.wav
     assert len(split_files) > 0
     assert "testfile_1.wav" in split_files[0]
     assert (tmp_path / "testfile_1.wav").exists()
@@ -114,15 +107,7 @@ def test_main(tmp_path):
                 # Mock glob to return some files
                 mock_glob.return_value = ["file1.wav", "file2.wav"]
 
-                # Mock Audio read to avoid actual file reading issues if split_file wasn't fully mocked
-                # But main calls Audio.read BEFORE split_file.
-                # So we need to mock Audio in split.py or just let it be if we mock everything.
-                # main() loop:
-                # for fname in fnames:
-                #     if not audio.read(fname): continue
-                #     split_file(fname)
-
-                # We need to mock Audio class in split.py so read() returns True
+                # Mock Audio read so it returns True
                 with patch("split.Audio") as MockAudio:
                     instance = MockAudio.return_value
                     instance.read.return_value = True

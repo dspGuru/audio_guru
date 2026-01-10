@@ -9,8 +9,7 @@ from segment import Segment
 
 
 def test_component_print_edge_cases(capsys):
-    # Test valid print checks internal logic for pwr > 0 usually?
-    # Logic: if ref_pwr <= 0, ref_pwr = MIN_PWR.
+    # Test with ref_pwr <= 0; logic sets ref_pwr = MIN_PWR
     c = Component(freq=1000, pwr=0.5, cat=Category.Tone)
 
     # Test with ref_pwr <= 0
@@ -32,7 +31,7 @@ def test_components_lists_edge_cases():
     md = Metadata("test", Segment(1000, 0, 100))
     comps = Components(md)
 
-    # combine empty
+    # Combine empty
     comps.combine()  # Should not crash
 
     # normalize_pwr empty / not found
@@ -56,21 +55,15 @@ def test_components_band_edges_failures():
 
     # find_index returns None (out of tolerance or range)
     # band_edges asserts lower < upper
-    # lower out of range
-    # find_index uses tolerance 100Hz default.
-    # If we ask for 5000Hz, it returns None.
+    # Lower out of range
+    # find_index uses tolerance 100 Hz default.
+    # If we ask for 5000 Hz, it returns None.
     le, ue = comps.band_edges(5000, 6000)
     assert le == 5000
     assert ue == 6000
 
-    # Test ValueError catch in generation expression (max() of empty sequence)
-    # We need lower_idx and upper_idx to be found, but NO components satisfying condition.
-    # Condition: lower <= freq <= center AND pwr <= target_pwr
-    # To force max() failure, we need find_index to succeed (so indices valid),
-    # but the generator filter to return nothing.
-    # Average power will be 1.0. target_pwr for 3dB attn is ~0.5.
-    # All components have pwr=1.0. So pwr <= target (0.5) will be False for all.
-    # Thus generator empty.
+    # Test band_edges when indices fail (out of range)
+    # Average power=1.0, target=0.5. All comps have pwr=1.0, so filter returns nothing.
     le, ue = comps.band_edges(100, 500, attn_db=3.0)
 
     # Should fall back to passed bounds
@@ -141,7 +134,5 @@ def test_components_combine_trailing_duplicates():
     expected_freq = (1000 * 1000.5) ** 0.5
     assert comps[0].freq == pytest.approx(expected_freq)
 
-    # Power should be sum / count (average) == 1.0 (since both 1.0)
-    # Wait, check average implementation: pwr = sum(pwr) / len.
-    # Yes, (1+1)/2 = 1.0.
+    # Power should be average (1+1)/2 = 1.0
     assert comps[0].pwr == 1.0

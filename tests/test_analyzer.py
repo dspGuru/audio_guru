@@ -13,25 +13,8 @@ import generate
 class ConcreteAnalyzer(Analyzer):
     def analyze(self, segment=None):
         self.select(segment)
-        # Return a dummy stats object or just the result of select
-        # The base implementation does self.select(segment),
-        # then self.time_stats = TimeStats(self.audio),
-        # then self.components = self.get_components()
-        # Since TimeStats needs audio, we should probably stick to standard helper behavior if possible,
-        # or mock it.
-        # But for 'analyze' return, Analyzer.analyze returns self.time_stats.
-        # Let's call super if we wanted full behavior, but Abstract method in Analyzer gives implementation!
-        # wait, Analyzer.analyze IS NOT empty?
-        # Abstract methods can have implementation in Python, but usually you override.
-        # Analyzer.analyze docstring says "Abstract method...".
-        # But it HAS a body:
-        # self.select(segment)
-        # self.time_stats = TimeStats(self.audio)
-        # self.components = self.get_components()
-        # return self.time_stats
-        # So we can just call super().analyze(segment) if we provide get_components.
-        # So we can just call super().analyze(segment) if we provide get_components.
-        self.analysis = super().analyze(segment)
+        # Call super().analyze() which provides get_components()
+        self.analysis = super().analyze()
         return self.analysis
 
     def get_components(self):
@@ -47,15 +30,15 @@ class ConcreteAnalyzer(Analyzer):
 
 
 # Integration Tests with Real Example Files
-def test_analyzer_integration_with_examples(examples_dir):
+def test_analyzer_integration_with_examples(signals_dir):
     # Use a real file
-    fname = examples_dir / "test_tone_1k.wav"
+    fname = signals_dir / "05-test_tone_1k.wav"
     if not fname.exists():
-        pytest.skip("test_tone_1k.wav not found in examples")
+        pytest.skip("05-test_tone_1k.wav not found in examples")
 
     audio = Audio()  # Empty audio
 
-    with unittest.mock.patch("analyzer.MIN_SEGMENT_SECS", 0.0):
+    with unittest.mock.patch("analyzer.SEGMENT_MIN_SECS", 0.0):
         analyzer = ConcreteAnalyzer(audio)
 
         # Test read
@@ -65,9 +48,7 @@ def test_analyzer_integration_with_examples(examples_dir):
         analyzer.select(max_secs=1.0)
     # Check that SOME selection happened and it's not empty
     assert len(analyzer.audio) > 0
-    # And it ideally respects max_secs if audio is long enough
-    # If audio is < 10s, it plays full.
-    # We just want to ensure select works without crashing.
+    # Ensure select works without crashing
 
     # Test analyze
     stats = analyzer.analyze()
@@ -82,8 +63,8 @@ def test_analyzer_integration_with_examples(examples_dir):
     assert isinstance(df, pd.DataFrame)
 
 
-def test_analyzer_to_csv(examples_dir, tmp_path):
-    fname = examples_dir / "test_tone_1k.wav"
+def test_analyzer_to_csv(signals_dir, tmp_path):
+    fname = signals_dir / "05-test_tone_1k.wav"
     if not fname.exists():
         pytest.skip("file missing")
 
@@ -115,8 +96,6 @@ def test_mock_instantiation_and_fs_property():
         def reset(self):
             pass
 
-        # Analyzer calls audio.reset? No, Analyzer calls self.reset
-
     fa = FakeAudio(length=96000, fs=48000)
     ta = ConcreteAnalyzer(fa)
     assert ta.fs == 48000
@@ -131,10 +110,7 @@ def test_analyzer_short_audio_error():
 
     an = ConcreteAnalyzer(a)
 
-    # Analyzer.select uses audio.select but checks length of segment first.
-    # We must pass a segment or let it create default segment from full audio.
-    # If full audio is short, default segment is short.
-
+    # Analyzer.select checks segment length first
     with pytest.raises(ValueError, match="too short to analyze"):
         an.select()
 

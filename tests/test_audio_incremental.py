@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from audio import Audio, Segment, Category
+from util import Channel
 import generate
 
 
@@ -24,7 +25,7 @@ def test_incremental_segmentation():
     id1 = segs[0].id
 
     # 2. Append Silence (0.2s) - long enough to be detected (min_silence=0.1s default)
-    s1 = generate.silence(secs=0.2, fs=fs)
+    s1 = generate.silence(secs=0.2, fs=fs, channel=Channel.Left)
     a1.append(s1)
 
     # 3. Append Tone (0.1s)

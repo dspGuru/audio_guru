@@ -68,3 +68,21 @@ def test_mutually_exclusive():
     # Two sorting flags should fail
     with pytest.raises(SystemExit):
         run_parser(["-t", "-tf"])
+
+
+def test_csv_optional_filename():
+    args = run_parser(["samples/panasonic*.wav", "-csv"])
+    assert args.pattern == "samples/panasonic*.wav"
+    assert args.write_csv == "analysis.csv"
+
+    args = run_parser(["-s", "-csv", r"samples\panasonic*.wav"])
+    assert args.pattern == r"samples\panasonic*.wav"
+    assert args.write_csv == "analysis.csv"
+
+    args = run_parser(["-s", "-csv", "custom.csv", r"samples\panasonic*.wav"])
+    assert args.pattern == r"samples\panasonic*.wav"
+    assert args.write_csv == "custom.csv"
+
+    args = run_parser(["-d", "-csv"])
+    assert args.pattern == ""
+    assert args.write_csv == "analysis.csv"

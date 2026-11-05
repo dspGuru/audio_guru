@@ -5,7 +5,7 @@ import math
 from analysis import Analysis
 from audio import Audio
 from constants import MIN_PWR
-from decibels import db_str
+from decibels import db, db_str
 
 __all__ = ["ToneStats"]
 
@@ -126,14 +126,14 @@ class ToneStats(Analysis):
     def to_dict(self) -> dict[str, float]:
         """Return an ordered dictionary of statistics."""
         stats_list = [
-            ("THD%", self.thd_pct),
-            ("THD", self.thd),
-            ("SNR", self.snr),
-            ("THDN", self.thdn),
-            ("SFDR", self.sfdr),
-            ("F1", self.freq),
-            ("F2", self.freq2),
-            ("Secs", self.secs),
+            ("THD%", round(self.thd_pct, 3)),
+            ("THD", round(db(self.thd), 1)),
+            ("SNR", round(db(self.snr), 1)),
+            ("THDN", round(db(self.thdn), 1)),
+            ("SFDR", round(db(self.sfdr), 1)),
+            ("F1", round(self.freq, 1)),
+            ("F2", round(self.freq2, 1)),
+            ("Secs", round(self.secs, 2)),
         ]
         stats = self.md.to_dict() | dict(stats_list)
         return stats

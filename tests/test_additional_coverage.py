@@ -764,3 +764,176 @@ class TestComponentSummary:
             )
             comps_single = sa.get_components()
             assert len(comps_single) == 1
+
+    def test_audio_analyzer_write_csv(self, tmp_path):
+        """Test AudioAnalyzer.write_csv and AudioAnalysis.to_dict."""
+        from audio_analyzer import AudioAnalyzer
+
+        fs = 1000
+        t = np.arange(1500) / fs
+        audio = Audio(fs=fs, name="Test_Unit_1k")
+        audio.samples = (0.5 * np.sin(2.0 * np.pi * 100.0 * t)).astype(np.float32)
+        audio.select()
+        audio.segment.cat = Category.Tone
+
+        analyzer = AudioAnalyzer(quiet=True)
+        res = analyzer.analyze(audio)
+        assert res is not None
+        d = res.to_dict()
+        assert "THD%" in d and "RMS" in d and "Type" in d and "Noise Floor" in d
+        assert "Desc" not in d and "Description" in d
+        assert d["THD"] < 0.0
+        assert res.name == "Test_Unit_1k"
+        assert res.freq == pytest.approx(100.0, abs=1.0)
+        with pytest.raises(AttributeError):
+            _ = res.nonexistent_attr
+        audio2 = Audio(fs=fs, name="Test_Unit_2k")
+        audio2.samples = (0.5 * np.sin(2.0 * np.pi * 200.0 * t)).astype(np.float32)
+        audio2.select()
+        audio2.segment.cat = Category.Tone
+        analyzer.analyze(audio2)
+
+        csv_file = tmp_path / "stats.csv"
+        analyzer.write_csv(str(csv_file), sort_attr="freq")
+        lines = csv_file.read_text().strip().splitlines()
+        assert len(lines) == 3
+        assert "Test_Unit_1k" in lines[1]
+        assert "Test_Unit_2k" in lines[2]
+        assert csv_file.exists()
+
+        # MC/DC coverage for Analysis.name, AudioAnalysis, _resolve_sort_key,
+        # _propagate_noise_floor, TimeStats.to_dict, and analyze.main (-csv)
+        from types import SimpleNamespace
+        import analyze
+        from audio_analyzer import AudioAnalysis, _resolve_sort_key
+        from audio_stats import AudioStats
+        from component import Component, Components
+        from freq_resp import FreqResp
+        from time_stats import TimeStats
+
+        # 1. Analysis.name property: default (_name is None) vs custom (_name set)
+        assert res.analysis.name == "Test_Unit_1k"
+        res.analysis.name = "CustomAnalysisName"
+        assert res.analysis.name == "CustomAnalysisName"
+        res.analysis.name = None
+        assert res.analysis.name == "Test_Unit_1k"
+
+        # 2. AudioAnalysis.name and __getattr__ branches
+        # - analysis has attribute (freq)
+        # - time_stats has attribute (crest) when analysis does not
+        assert res.crest == pytest.approx(res.time_stats.crest)
+        # - segment has attribute (stop_secs) when analysis=None, time_stats=None
+        aa_seg_only = AudioAnalysis(audio.segment, None, None, None)
+        assert aa_seg_only.name == ""
+        assert aa_seg_only.stop_secs == pytest.approx(audio.segment.stop_secs)
+
+        # 3. AudioAnalysis.to_dict branches:
+        # - FreqResp rounding (float vs non-float values)
+        comps = Components(audio.md)
+        comps.append(Component(freq=100.0, pwr=1.0, secs=1.0))
+        fr = FreqResp(comps)
+        fr.minimum = -45.678
+        aa_fr = AudioAnalysis(audio.segment, res.time_stats, fr, comps)
+        d_fr = aa_fr.to_dict()
+        assert d_fr["minimum"] == -45.7
+
+        dummy_analysis = SimpleNamespace(
+            to_dict=lambda: {"minimum": None, "ripple": 1, "other": 2.345}
+        )
+        aa_no_md = AudioAnalysis(
+            SimpleNamespace(), res.time_stats, dummy_analysis, None
+        )
+        d_no_md = aa_no_md.to_dict()
+        assert "Type" not in d_no_md
+        assert "Desc" in d_no_md  # Not popped when "Description" not in md_dict
+        assert d_no_md["minimum"] is None and d_no_md["ripple"] == 1
+
+        # - analysis is time_stats (e.g. Silence/Unknown) and segment is None
+        aa_same = AudioAnalysis(None, res.time_stats, res.time_stats, None)
+        d_same = aa_same.to_dict()
+        assert "Type" not in d_same and "Description" in d_same and "Desc" not in d_same
+
+        # - time_stats is None and analysis is None
+        assert aa_seg_only.to_dict() == {"Type": "Tone"}
+
+        # - Noise Floor branches in AudioAnalysis.to_dict:
+        #   nf > 0.0 (float), nf == 0.0 (float <= 0), nf is None (non-numeric)
+        res.time_stats.noise_floor = 0.01
+        assert res.to_dict()["Noise Floor"] == -40.0
+        res.time_stats.noise_floor = 0.0
+        assert res.to_dict()["Noise Floor"] is None
+        res.time_stats.noise_floor = None
+        assert res.to_dict()["Noise Floor"] is None
+
+        # 4. _resolve_sort_key branches: val is None vs val is not None
+        assert _resolve_sort_key(aa_seg_only, "thd") == (1, "")
+        assert _resolve_sort_key(res, "freq")[0] == 0
+
+        # 5. _propagate_noise_floor branches:
+        # - empty nf_by_name (noise_floor == 0.0 and noise_floor is None)
+        astats_zero = AudioStats(audio)
+        astats_zero.noise_floor = 0.0
+        astats_none = AudioStats(audio)
+        astats_none.noise_floor = None
+        analyzer.analysis_list.extend([astats_zero, astats_none])
+        analyzer._propagate_noise_floor()
+        assert res.time_stats.noise_floor is None
+
+        # - non-empty nf_by_name with matching, non-matching, and time_stats=None
+        astats_pos = AudioStats(audio)
+        astats_pos.noise_floor = 0.005
+        analyzer.analysis_list.append(astats_pos)
+        analyzer.results["none_ts"] = aa_seg_only
+        analyzer._propagate_noise_floor()
+        assert res.time_stats.noise_floor == 0.005
+        assert (
+            analyzer.results[f"{audio2.name}:{audio2.segment}"].time_stats.noise_floor
+            == 0.0
+        )
+        del analyzer.results["none_ts"]
+
+        # 6. write_csv branches:
+        # - sort_attr="" (isinstance(attr, str) is True, bool(attr) is False)
+        analyzer.write_csv(str(csv_file), sort_attr="")
+        # - sort_attr=None and _tone_sort_attr=None (isinstance(attr, str) is False)
+        analyzer._tone_sort_attr = None
+        analyzer.write_csv(str(csv_file), sort_attr=None)
+        # - self.results empty (falls back to self.analysis_list)
+        empty_analyzer = AudioAnalyzer(quiet=True)
+        empty_analyzer.analysis_list.append(res.time_stats)
+        empty_analyzer.write_csv(str(csv_file), sort_attr="start")
+
+        # 7. TimeStats.to_dict quadrature branches (Phase and Balance non-None vs None)
+        ch0 = (0.5 * np.cos(2.0 * np.pi * 100.0 * t)).astype(np.float32)
+        ch1 = (0.5 * np.sin(2.0 * np.pi * 100.0 * t)).astype(np.float32)
+        q_audio = Audio(fs=fs, name="Quad_Test")
+        q_audio.samples = np.column_stack((ch0, ch1))
+        q_audio.select()
+        q_ts = TimeStats(q_audio)
+        q_dict = q_ts.to_dict()
+        assert isinstance(q_dict["Phase"], float)
+        assert isinstance(q_dict["Balance"], float)
+
+        # 8. analyze.main with -csv option enabled
+        from unittest.mock import MagicMock, patch
+
+        mock_args = MagicMock()
+        mock_args.pattern = "*.wav"
+        mock_args.table = "freq"
+        mock_args.components = None
+        mock_args.audio_stats = True
+        mock_args.device = False
+        mock_args.max_length = 60.0
+        mock_args.play = None
+        mock_args.verbose = False
+        mock_args.quiet = True
+        mock_args.write_csv = str(csv_file)
+        with (
+            patch("analyze.get_args", return_value=mock_args),
+            patch("analyze.AudioAnalyzer") as mock_aa_cls,
+        ):
+            mock_aa = mock_aa_cls.return_value
+            mock_aa.read.return_value = 1
+            analyze.main()
+            assert mock_aa._tone_sort_attr == "freq"
+            mock_aa.write_csv.assert_called_once_with(str(csv_file))

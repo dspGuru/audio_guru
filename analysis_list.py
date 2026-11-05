@@ -122,4 +122,4 @@ class AnalysisList(list):
             print(df.head())
 
         # Write the DataFrame to CSV with specified options
-        df.to_csv(p, header=True, index=index, float_format="%.1f")
+        df.to_csv(p, header=True, index=index)

@@ -35,6 +35,7 @@ class Analysis(ABC):
             Metadata associated with the analysis.
         """
         self.md = copy(md)
+        self._name: str | None = None
 
     @property
     def cat(self) -> str:
@@ -60,6 +61,16 @@ class Analysis(ABC):
     def start(self) -> float:
         """Return the start time of the segment."""
         return self.md.segment.start_secs
+
+    @property
+    def name(self) -> str:
+        """Return the analysis name or file name (pathname)."""
+        return self._name if self._name is not None else self.md.name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        """Set a custom name for the analysis."""
+        self._name = value
 
     @property
     def unit_id(self) -> str:

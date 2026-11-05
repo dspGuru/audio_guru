@@ -39,7 +39,12 @@ def get_args() -> argparse.Namespace:
         "-csv",
         "--write-csv",
         metavar="CSV",
-        help="write statistics to a CSV file",
+        nargs="?",
+        const="analysis.csv",
+        help=(
+            "write statistics to a CSV file "
+            "(optional .csv file name, default 'analysis.csv')"
+        ),
         default=None,
     )
     parser.add_argument(
@@ -136,7 +141,15 @@ def get_args() -> argparse.Namespace:
     parser.set_defaults(table="thd")
 
     # Return parsed arguments
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (
+        args.write_csv
+        and not args.pattern
+        and not args.write_csv.lower().endswith(".csv")
+    ):
+        args.pattern = args.write_csv
+        args.write_csv = "analysis.csv"
+    return args
 
 
 def main():
@@ -171,6 +184,7 @@ def main():
 
     # Write the analysis results to a CSV file if specified
     if args.write_csv:
+        analyzer._tone_sort_attr = args.table
         analyzer.write_csv(args.write_csv)
 
 

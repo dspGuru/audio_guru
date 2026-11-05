@@ -11,6 +11,7 @@ from audio import Audio
 from audio_stats import AudioStats
 from component import Components
 from constants import SEGMENT_MAX_SECS
+from decibels import dbv
 from freq_resp import FreqResp
 from noise_analyzer import NoiseAnalysis
 from noise_analyzer import NoiseAnalyzer
@@ -34,12 +35,63 @@ class AudioAnalysis:
     analysis: Analysis
     components: Components
 
+    @property
+    def name(self) -> str:
+        """Return the file name (pathname) associated with this analysis."""
+        return self.analysis.md.name if hasattr(self.analysis, "md") else ""
+
+    def __getattr__(self, name: str):
+        """Delegate attribute lookup to underlying analysis, time_stats, or segment."""
+        for obj in (self.analysis, self.time_stats, self.segment):
+            if obj is not None and hasattr(obj, name):
+                return getattr(obj, name)
+        raise AttributeError(f"'AudioAnalysis' object has no attribute '{name}'")
+
     def __str__(self) -> str:
         """Return string representation of analysis result."""
         return (
             f"Analysis(segment={self.segment}, result={self.analysis}, "
             f"components={self.components})"
         )
+
+    def to_dict(self) -> dict:
+        """Convert the audio analysis result to a dictionary."""
+        md_dict = self.analysis.md.to_dict() if hasattr(self.analysis, "md") else {}
+        type_dict = (
+            {"Type": self.segment.cat.name}
+            if self.segment is not None and hasattr(self.segment, "cat")
+            else {}
+        )
+        analysis_dict = (
+            dict(self.analysis.to_dict())
+            if self.analysis is not None and self.analysis is not self.time_stats
+            else {}
+        )
+        for k in ("minimum", "ripple", "lower_edge", "upper_edge"):
+            if k in analysis_dict and isinstance(analysis_dict[k], float):
+                analysis_dict[k] = round(analysis_dict[k], 1)
+
+        time_dict = (
+            dict(self.time_stats.to_dict()) if self.time_stats is not None else {}
+        )
+        if "Description" in md_dict:
+            time_dict.pop("Desc", None)
+
+        if self.time_stats is not None:
+            nf = getattr(self.time_stats, "noise_floor", 0.0)
+            time_dict["Noise Floor"] = (
+                round(dbv(nf), 1) if isinstance(nf, (int, float)) and nf > 0.0 else None
+            )
+
+        return md_dict | type_dict | analysis_dict | time_dict
+
+
+def _resolve_sort_key(item: object, attr: str) -> tuple:
+    """Return a comparable sort key tuple for an Analysis or AudioAnalysis item."""
+    val = getattr(item, attr, None)
+    if val is None:
+        return (1, "")
+    return (0, val)
 
 
 class AudioAnalyzer:
@@ -81,6 +133,7 @@ class AudioAnalyzer:
         self.unit_ids: set[str] = set()
         self.quiet = quiet
         self.verbose = verbose
+        self._tone_sort_attr: str | None = "thd"
         self._q: queue.Queue = queue.Queue()
 
     def analyze(self, audio: Audio) -> AudioAnalysis | None:
@@ -177,6 +230,20 @@ class AudioAnalyzer:
             finally:
                 q.task_done()
 
+    def _propagate_noise_floor(self) -> None:
+        """Propagate file-level AudioStats noise floor to segment TimeStats."""
+        nf_by_name = {
+            s.name: s.noise_floor
+            for s in self.analysis_list.filtered(__class__=AudioStats)
+            if isinstance(getattr(s, "noise_floor", None), (int, float))
+            and s.noise_floor > 0.0
+        }
+        if not nf_by_name:
+            return
+        for res in self.results.values():
+            if res.time_stats is not None and res.time_stats.name in nf_by_name:
+                res.time_stats.noise_floor = nf_by_name[res.time_stats.name]
+
     def read(self, pattern: str, quiet: bool = False) -> int:
         """
         Read and analyze the specified sample data files.
@@ -191,6 +258,8 @@ class AudioAnalyzer:
         int
             Number of files read successfully.
         """
+        self.quiet = quiet
+
         # Get the list of files matching the pattern
         fnames = glob.glob(pattern)
         if not fnames:
@@ -232,6 +301,7 @@ class AudioAnalyzer:
         # Signal the worker to stop and wait for it to finish
         self._q.put(None)
         worker.join()
+        self._propagate_noise_floor()
 
         return num_read
 
@@ -249,6 +319,7 @@ class AudioAnalyzer:
         bool
             True if recording was successful, False otherwise.
         """
+        self.quiet = quiet
         try:
             # Create the audio object and print status
             self.audio = Audio(name="Device Input")
@@ -295,6 +366,7 @@ class AudioAnalyzer:
             if num_blocks > 0:
                 audio_stats = AudioStats(self.audio)
                 self.analysis_list.append(audio_stats)
+                self._propagate_noise_floor()
                 return True
 
             # No blocks were read
@@ -311,6 +383,7 @@ class AudioAnalyzer:
             if num_blocks > 0:
                 audio_stats = AudioStats(self.audio)
                 self.analysis_list.append(audio_stats)
+                self._propagate_noise_floor()
                 self.print()
                 return True
 
@@ -344,6 +417,7 @@ class AudioAnalyzer:
         audio_stats : bool
             Whether to print audio statistics for each audio source.
         """
+        self._tone_sort_attr = tone_sort_attr
         print("\nAudio Analysis Results")
         print("======================\n")
 
@@ -384,3 +458,32 @@ class AudioAnalyzer:
             tone_stats_list = self.analysis_list.filtered(__class__=ToneStats)
             if tone_stats_list:
                 print(tone_stats_list.summary(tone_sort_attr))
+
+    def write_csv(
+        self,
+        filepath: str,
+        index: bool = False,
+        print_head: bool = False,
+        sort_attr: str | None = None,
+    ) -> None:
+        """
+        Write the analysis results to the specified CSV file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the output CSV file.
+        index : bool, optional
+            Whether to write row indices to the CSV file (default is False).
+        print_head : bool, optional
+            Whether to print the CSV head (default is False).
+        sort_attr : str | None, optional
+            Attribute name to sort rows by (defaults to tone_sort_attr).
+        """
+        export_list = (
+            AnalysisList(self.results.values()) if self.results else self.analysis_list
+        )
+        attr = sort_attr if sort_attr is not None else self._tone_sort_attr
+        if isinstance(attr, str) and attr:
+            export_list.sort(key=lambda item: _resolve_sort_key(item, attr))
+        export_list.to_csv(filepath, index=index, print_head=print_head)

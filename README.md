@@ -24,7 +24,7 @@ python analyze.py [options] <pattern>
 **Options:**
 - `-a`, `--audio-stats`: Show audio statistics (default: enabled).
 - `-c`, `--components [N]`: Show top N frequency components (default: 10).
-- `-csv`, `--write-csv <file>`: Write statistics to a CSV file.
+- `-csv`, `--write-csv [file]`: Write statistics to a CSV file (optional `.csv` file name, default: `analysis.csv`).
 - `-d`, `--device`: Use input from default audio device instead of files.
 - `-l`, `--max-length <secs>`: Maximum analysis length in seconds (default: 60.0).
 - `-p`, `--play <pattern>`: Play files matching the pattern.

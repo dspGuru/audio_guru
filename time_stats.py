@@ -118,12 +118,22 @@ class TimeStats(Analysis):
         stats_list: list[tuple[str, float]] = [
             ("Desc", self.md.desc),
             ("Fs", self.md.fs),
-            ("Secs", self.md.secs),
-            ("RMS", self.rms),
-            ("DC", self.dc),
-            ("Crest", self.crest),
-            ("Phase", self.phase_error),
-            ("Balance", self.amplitude_balance),
+            ("Secs", round(self.md.secs, 2)),
+            ("RMS", round(self.rms, 4)),
+            ("DC", round(self.dc, 6)),
+            ("Crest", round(self.crest, 3)),
+            (
+                "Phase",
+                round(float(np.degrees(self.phase_error)), 2)
+                if self.phase_error is not None
+                else None,
+            ),
+            (
+                "Balance",
+                round(self.amplitude_balance, 4)
+                if self.amplitude_balance is not None
+                else None,
+            ),
         ]
         stats = dict(stats_list)
         return stats

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import scipy.linalg as la
 from scipy import signal
-from scipy.fft import rfft, rfftfreq
+from scipy.fft import rfft
 import sounddevice as sd
 import soundfile as sf
 
@@ -117,11 +117,13 @@ class Audio:
         next_id : int
             Next segment identifier.
         """
+        # Initialize basic properties
         self.fs = fs
         self.min_segment_secs: float = min_segment_secs
         self.max_segment_secs: float = max_segment_secs
         self.channel = channel
 
+        # Initialize internal state and data structures
         self.blocksize = round(fs * DEFAULT_BLOCKSIZE_SECS)
         self.segment = Segment(fs)
         self.samples: np.ndarray = np.ndarray(shape=1, dtype=self.DTYPE)
@@ -130,14 +132,18 @@ class Audio:
         self.md = Metadata(name, self.segment)
         self.sf = None
         self.stream = None
+
+        # Initialize analysis state
         self.cat = Category.Unknown
         self.next_id: int = 0
         self._noise_sum: float = 0.0
         self._noise_count: int = 0
+        self._segments_current: bool = False
 
     @property
     def eof(self) -> bool:
         """Return True if the audio source has been exhausted or is closed."""
+        # If soundfile is open, check if we have reached the end
         if self.sf is not None and not self.sf.closed:
             return self.sf.tell() >= len(self.sf)
         if self.stream is not None and self.stream.active:
@@ -203,7 +209,8 @@ class Audio:
 
         if np.shape(other.selected_samples) != np.shape(self.selected_samples):
             raise ValueError(
-                "Cannot add audio with a different number of samples than the current audio"
+                "Cannot add audio with a different number of samples "
+                "than the current audio"
             )
 
         # Add the samples
@@ -258,6 +265,7 @@ class Audio:
         # Update segment and metadata to span the whole buffer
         self.segment = Segment(self.fs, 0, len(self.samples))
         self.md.segment = copy(self.segment)
+        self._segments_current = False
 
         return self
 
@@ -267,7 +275,9 @@ class Audio:
 
     def __iter__(self):
         """Return an iterator over the audio segments."""
-        self.segments = self.get_segments()
+        if not getattr(self, "_segments_current", False):
+            self.segments = self.get_segments()
+        self._segments_current = False
         return self
 
     def __next__(self):
@@ -401,6 +411,13 @@ class Audio:
         audio.segment.stop = len(audio.samples)
         audio.segment.channel = segment.channel
         audio.select(audio.segment)
+        if segment == self.segment:
+            if "cat" in self.__dict__:
+                audio.__dict__["cat"] = self.__dict__["cat"]
+            if "bins" in self.__dict__:
+                bins_copy = copy(self.__dict__["bins"])
+                bins_copy.md = copy(audio.md)
+                audio.__dict__["bins"] = bins_copy
 
         return audio
 
@@ -429,7 +446,8 @@ class Audio:
             raise ValueError("Segment start must be non-negative")
         if segment.stop > len(self.samples) + 1:
             raise ValueError(
-                f"Segment stop ({segment.stop}) must not be greater than audio length ({len(self.samples)}) + 1"
+                f"Segment stop ({segment.stop}) must not be greater than "
+                f"audio length ({len(self.samples)}) + 1"
             )
         if segment.stop <= segment.start:
             raise ValueError("Segment stop must be greater than start")
@@ -446,6 +464,7 @@ class Audio:
         """
         # Validate the segment and set convenience variables
         self.validate(segment)
+        self._segments_current = False
         start = segment.start
         stop = segment.stop
 
@@ -640,14 +659,16 @@ class Audio:
 
         # Get amplitudes of samples (mono or peak across channels)
         if samples.ndim > 1:
-            # Efficiently get peak amplitude across channels without full mean
-            amplitudes = np.max(np.abs(samples), axis=1)
+            if samples.shape[1] == 2:
+                amplitudes = np.maximum(np.abs(samples[:, 0]), np.abs(samples[:, 1]))
+            else:
+                amplitudes = np.max(np.abs(samples), axis=1)
         else:
             amplitudes = np.abs(samples)
 
         # Calculate silence threshold
         peak = float(max(np.max(amplitudes), SILENCE_MIN_PEAK))
-        thresh = peak * float(DEFAULT_SILENCE_THRESH_RATIO)
+        thresh = peak * float(silence_thresh_ratio)
         thresh = max(thresh, SILENCE_MIN_THRESHOLD)
 
         # Detect segments from raw audio
@@ -787,10 +808,13 @@ class Audio:
             seg_a = amplitudes[seg.start - start_sample : seg.stop - start_sample]
 
             # Find active samples
-            active = np.where(seg_a >= thresh)[0]
-            if active.size > 0:
-                first = int(max(0, active[0] - pad))
-                last = int(min(len(seg_a) - 1, active[-1] + pad))
+            mask = seg_a >= thresh
+            if np.any(mask):
+                first_idx = int(np.argmax(mask))
+                last_idx = len(seg_a) - 1 - int(np.argmax(mask[::-1]))
+                first = max(0, first_idx - pad)
+                last = min(len(seg_a) - 1, last_idx + pad)
+
                 seg.start += first
                 seg.stop = seg.start + (last - first) + 1
                 self.validate(seg)
@@ -812,7 +836,7 @@ class Audio:
 
                 # Update the running average noise floor
                 self._noise_sum += noise
-                self._noise_count += len(seg)
+                self._noise_count += self.samples[seg.slice].size
 
     @cached_property
     def bins(self) -> FreqBins:
@@ -847,34 +871,74 @@ class Audio:
             True if the audio is a sweep signal.
         """
         # Get mono samples for analysis
-        samples = self.selected_samples
-        if samples.ndim > 1:
-            samples = np.mean(samples, axis=1)
-
-        # Use STFT to estimate frequency changes over time. Use a segment
-        # length corresponding to SWEEP_SEGMENT_SECS but capped to 1/4 of total
-        # samples to ensure at least 4 frames.
-        n_samples = len(samples)
+        raw_samples = self.selected_samples
+        n_samples = len(raw_samples)
         nperseg = min(round(SWEEP_SEGMENT_SECS * self.fs), n_samples // 4)
         if nperseg < 8:  # Minimum window for reliable FFT
             return False
 
+        noverlap = nperseg // 2
+        step = nperseg - noverlap
+        nadd = nperseg // 2
+        l_ext = n_samples + 2 * nadd
+        n_pad = (-(l_ext - nperseg) % step) % step
+        n_frames = (l_ext + n_pad - nperseg) // step + 1
+        min_pwr_sq = (10.0 * MIN_PWR) ** 2
+        min_bin = int(0.5 * MIN_FREQ * nperseg / self.fs)
+
+        # Fast-path check on first and last STFT boundary frames:
+        # For any monotonic sequence v_0, ..., v_{m-1} with at least one strict
+        # step, the endpoints must differ (v_0 != v_{m-1}).
+        win = signal.get_window("hann", nperseg).astype(np.float32)
+        win /= np.sum(win)
+        buf = np.zeros((2, nperseg), dtype=np.float32)
+        s0 = raw_samples[: nperseg - nadd]
+        if s0.ndim > 1:
+            s0 = (
+                (s0[:, 0] + s0[:, 1]) * np.float32(0.5)
+                if s0.shape[1] == 2
+                else np.mean(s0, axis=1)
+            )
+        buf[0, nadd : nadd + len(s0)] = s0
+
+        start_last = (n_frames - 1) * step - nadd
+        sl = raw_samples[start_last : start_last + nperseg]
+        if sl.ndim > 1:
+            sl = (
+                (sl[:, 0] + sl[:, 1]) * np.float32(0.5)
+                if sl.shape[1] == 2
+                else np.mean(sl, axis=1)
+            )
+        buf[1, : len(sl)] = sl
+        buf *= win
+        zf = rfft(buf, axis=1)
+        pwr_ends = zf.real * zf.real + zf.imag * zf.imag
+        if np.max(pwr_ends[0]) > min_pwr_sq and np.max(pwr_ends[1]) > min_pwr_sq:
+            idx0 = int(np.argmax(pwr_ends[0]))
+            idx1 = int(np.argmax(pwr_ends[1]))
+            if idx0 == idx1 and idx0 > min_bin:
+                return False
+
+        if raw_samples.ndim > 1:
+            if raw_samples.shape[1] == 2:
+                samples = (raw_samples[:, 0] + raw_samples[:, 1]) * np.float32(0.5)
+            else:
+                samples = np.mean(raw_samples, axis=1)
+        else:
+            samples = raw_samples
+
         f, _, magnitude = signal.stft(
-            samples, self.fs, nperseg=nperseg, noverlap=nperseg // 2
+            samples, self.fs, nperseg=nperseg, noverlap=noverlap
         )
-        mags = np.abs(magnitude)
-
-        # Find peak frequency for each time frame
-        freqs = []
-        for i in range(mags.shape[1]):
-            col = mags[:, i]
-            # Use a slightly higher threshold than MIN_PWR to ignore graininess
-            if np.max(col) > 10.0 * MIN_PWR:
-                idx = np.argmax(col)
-                freqs.append(float(f[idx]))
-
-        # Filter out very low frequencies which might be noise
-        valid_freqs = [f for f in freqs if f > 0.5 * MIN_FREQ]
+        pwr = magnitude.real * magnitude.real + magnitude.imag * magnitude.imag
+        max_pwr = np.max(pwr, axis=0)
+        valid_cols = max_pwr > (10.0 * MIN_PWR) ** 2
+        if np.any(valid_cols):
+            peak_idxs = np.argmax(pwr[:, valid_cols], axis=0)
+            freqs = f[peak_idxs]
+            valid_freqs = freqs[freqs > 0.5 * MIN_FREQ]
+        else:
+            valid_freqs = np.empty(0, dtype=np.float64)
 
         # If all subsegments have increasing or decreasing frequencies it is a
         # sweep
@@ -922,42 +986,41 @@ class Audio:
         # For non-noise signals, return False if the frequencies of the two
         # channels differ significantly
         if cat != Category.Noise:
-            # Compute FFT magnitude spectrum of each channel
-            fft0 = np.abs(rfft(ch0))
-            fft1 = np.abs(rfft(ch1))
-            freqs = rfftfreq(len(ch0), 1.0 / self.fs)
+            # Compute FFT power spectrum of each channel (cap length for speed)
+            n_fft = min(len(ch0), 16384)
+            fft0 = rfft(ch0[:n_fft])
+            fft1 = rfft(ch1[:n_fft])
+            pwr0 = fft0.real[1:] * fft0.real[1:] + fft0.imag[1:] * fft0.imag[1:]
+            pwr1 = fft1.real[1:] * fft1.real[1:] + fft1.imag[1:] * fft1.imag[1:]
 
-            # Find peak frequency of each channel, ignoring DC bin (index 0)
-            peak_bin0 = int(np.argmax(fft0[1:]) + 1)
-            peak_bin1 = int(np.argmax(fft1[1:]) + 1)
-            freq0 = freqs[peak_bin0]
-            freq1 = freqs[peak_bin1]
+            # Find peak frequency bin of each channel, ignoring DC bin (index 0)
+            if len(pwr0) > 0:
+                peak_bin0 = int(np.argmax(pwr0) + 1)
+                peak_bin1 = int(np.argmax(pwr1) + 1)
 
-            # Reject if frequencies differ by more than the allowed ratio
-            if freq0 > 0.0 and freq1 > 0.0:
-                freq_ratio = min(freq0, freq1) / max(freq0, freq1)
+                # Reject if frequencies differ by more than the allowed ratio
+                freq_ratio = min(peak_bin0, peak_bin1) / max(peak_bin0, peak_bin1)
                 if freq_ratio < QUADRATURE_MIN_FREQ_RATIO:
                     return False
 
         # Calculate complex magnitudes and check for magnitude consistency
 
-        # Compute complex magnitudes: |ch0 + j*ch1|
-        magnitudes = np.sqrt(ch0**2 + ch1**2)
-
         # Get peak amplitude of each channel
-        peak0 = np.max(np.abs(ch0))
-        peak1 = np.max(np.abs(ch1))
+        peak0 = float(np.max(np.abs(ch0)))
+        peak1 = float(np.max(np.abs(ch1)))
         peak = max(peak0, peak1)
 
         # Avoid division by zero for silent audio
         if peak == 0.0:
             return False
 
-        # Check how many samples have magnitude close to peak (constant
-        # envelope)
-        tolerance = QUADRATURE_MAGNITUDE_TOLERANCE * peak
-        consistent = np.abs(magnitudes - peak) <= tolerance
-        ratio = np.sum(consistent) / len(magnitudes)
+        # Check how many samples have squared magnitude close to peak^2
+        # (avoids full-array sqrt and intermediate arrays)
+        mag_sq = ch0 * ch0 + ch1 * ch1
+        low_sq = ((1.0 - QUADRATURE_MAGNITUDE_TOLERANCE) * peak) ** 2
+        high_sq = ((1.0 + QUADRATURE_MAGNITUDE_TOLERANCE) * peak) ** 2
+        consistent = (mag_sq >= low_sq) & (mag_sq <= high_sq)
+        ratio = int(np.count_nonzero(consistent)) / len(mag_sq)
 
         # Signal is quadrature if sufficient samples have consistent
         # magnitude
@@ -1031,11 +1094,8 @@ class Audio:
         if not self.is_quadrature:
             return None
 
-        # Check if it's a sine wave using FreqBins
-        from freq_bins import FreqBins
-
-        bins = FreqBins(self.selected_samples, self.md)
-        if not bins.is_sine():
+        # Check if it's a sine wave using cached FreqBins
+        if not self.bins.is_sine():
             return None
 
         # Get wrapped phase (no unwrapping to avoid noise issues)
@@ -1050,17 +1110,21 @@ class Audio:
         # Calculate phase differences (instantaneous frequency)
         # Wrap differences to [-π, π] to handle wraparound correctly
         phase_diff = np.diff(phase)
-        phase_diff = np.arctan2(np.sin(phase_diff), np.cos(phase_diff))
+        two_pi = 2.0 * np.pi
+        phase_diff = (phase_diff + np.pi) % two_pi - np.pi
 
         # The ideal signal has constant instantaneous frequency
         # Phase error = RMS deviation of phase_diff from its mean
-        mean_diff = np.mean(phase_diff)
-        error = phase_diff - mean_diff
+        mean_diff = float(np.mean(phase_diff))
+        n_idx = np.arange(len(phase), dtype=np.float64)
+        detrended = phase - mean_diff * n_idx
+        phi0 = float(np.arctan2(np.mean(np.sin(detrended)), np.mean(np.cos(detrended))))
+        error = detrended - phi0
 
         # Wrap errors to [-π, π] for proper RMS calculation
-        error = np.arctan2(np.sin(error), np.cos(error))
+        error = (error + np.pi) % two_pi - np.pi
 
-        rms_error = float(np.sqrt(np.mean(error**2)))
+        rms_error = float(np.sqrt(np.mean(error * error)))
 
         return rms_error
 
@@ -1128,23 +1192,21 @@ class Audio:
 
         # Calculate the average of each segment of the audio
         avg_size = int(self.fs * secs)
-        averages = np.array([], dtype=self.DTYPE)
-        for i in range(0, len(abs_audio) - avg_size + 1, avg_size):
-            segment = abs_audio[i : i + avg_size]
-            avg = np.mean(segment)
-            averages = np.append(averages, avg)
-
-        # Return zero if no averages were calculated
-        if averages.size == 0:
+        n_segs = len(abs_audio) // avg_size if avg_size > 0 else 0
+        if n_segs == 0:
             return (0.0, 0)
+        averages = np.mean(
+            abs_audio[: n_segs * avg_size].reshape(n_segs, avg_size), axis=1
+        )
 
         # Calculate the noise floor as the minimum value of the averages
-        noise_floor = float(np.min(averages))
+        min_idx = int(np.argmin(averages))
+        noise_floor = float(averages[min_idx])
         if dbv(noise_floor) > max_noise_db:
             return (0.0, 0)
 
         # Return the noise floor and the index at which it was found
-        index = int(np.where(averages == noise_floor)[0][0] * avg_size)
+        index = min_idx * avg_size
         return (noise_floor, index)
 
     def read(self, fname: str | Path) -> bool:
@@ -1344,6 +1406,7 @@ class Audio:
         if len(data) > 0:
             self.append(data)
             self.get_segments()
+            self._segments_current = True
 
             # Verify samples buffer doesn't grow unbounded
             max_samples = int(2 * SEGMENT_MAX_SECS * self.fs)

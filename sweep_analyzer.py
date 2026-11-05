@@ -83,21 +83,38 @@ class SweepAnalyzer(Analyzer):
             padded=False,
             boundary=None,
         )
-        mags = np.abs(z)
+        col_pwr = z.real * z.real + z.imag * z.imag
+        frame_pwrs = np.sum(col_pwr, axis=0)
+        max_pwrs = np.max(col_pwr, axis=0)
+        peak_idxs = np.argmax(col_pwr, axis=0)
+        df = float(f[1] - f[0]) if len(f) > 1 else 0.0
+        n_bins = col_pwr.shape[0]
+        eps_sq = MIN_PWR * MIN_PWR
 
         # Process each time frame in the STFT output
         components = Components(self.audio.md)
         eps = MIN_PWR
-        for i in range(mags.shape[1]):
+        for i in range(col_pwr.shape[1]):
             # Get magnitude column for this time frame
-            col = mags[:, i]
-            if np.all(col <= eps):
+            col = col_pwr[:, i]
+            if max_pwrs[i] <= eps_sq:
                 continue
 
             # Find peak frequency bin and compute power
-            idx = int(np.argmax(col))
+            idx = int(peak_idxs[i])
             freq_hz = float(f[idx])
-            pwr = float(np.sum(np.abs(col) ** 2.0))  # total power in this frame
+            if 0 < idx < n_bins - 1 and col[idx - 1] > eps_sq and col[idx + 1] > eps_sq:
+                ly0 = 0.5 * float(np.log(col[idx - 1]))
+                ly1 = 0.5 * float(np.log(col[idx]))
+                ly2 = 0.5 * float(np.log(col[idx + 1]))
+
+                denom = 2.0 * ly1 - ly0 - ly2
+                if abs(denom) > eps:
+                    delta = float(np.clip(0.5 * (ly2 - ly0) / denom, -0.5, 0.5))
+                    freq_hz = float(f[idx] + delta * df)
+
+            pwr = float(frame_pwrs[i])  # total power in this frame
+
             secs = float(t[i])
 
             # Skip DC and very low frequencies

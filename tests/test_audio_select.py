@@ -4,7 +4,6 @@ from audio_select import AudioSelect
 
 
 class TestAudioSelect(unittest.TestCase):
-
     def setUp(self):
         # Mock data for sounddevice
         self.mock_devices = [
@@ -102,3 +101,107 @@ class TestAudioSelect(unittest.TestCase):
         self.assertIn("Category", r)
         self.assertIn("Microphone", r)
         self.assertIn("MME", r)
+
+    @patch("audio_select.sd.query_devices")
+    @patch("audio_select.sd.query_hostapis")
+    def test_digital_category(self, mock_hostapis, mock_devices):
+        """Test Digital category detection for SPDIF/IEC958 devices."""
+        mock_devices.return_value = [
+            {
+                "name": "SPDIF Output",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            },
+            {
+                "name": "Digital Audio (IEC958)",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            },
+        ]
+        mock_hostapis.return_value = [{"name": "WASAPI"}]
+
+        as_sel = AudioSelect()
+
+        self.assertEqual(as_sel.devices[0]["category"], "Digital")
+        self.assertEqual(as_sel.devices[1]["category"], "Digital")
+
+    @patch("audio_select.sd.query_devices")
+    @patch("audio_select.sd.query_hostapis")
+    def test_digital_input_precedence(self, mock_hostapis, mock_devices):
+        """Test Digital precedence over Line In for SPDIF/Digital Input."""
+        mock_devices.return_value = [
+            {
+                "name": "SPDIF Digital Input",
+                "hostapi": 0,
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+            },
+        ]
+        mock_hostapis.return_value = [{"name": "WASAPI"}]
+
+        as_sel = AudioSelect()
+
+        self.assertEqual(as_sel.devices[0]["category"], "Digital")
+
+    @patch("audio_select.sd.query_devices")
+    @patch("audio_select.sd.query_hostapis")
+    def test_other_category(self, mock_hostapis, mock_devices):
+        """Test Other category fallback for unrecognized devices."""
+        mock_devices.return_value = [
+            {
+                "name": "Unknown Audio Device XYZ",
+                "hostapi": 0,
+                "max_input_channels": 2,
+                "max_output_channels": 2,
+            },
+            {
+                "name": "Custom Hardware Interface",
+                "hostapi": 0,
+                "max_input_channels": 4,
+                "max_output_channels": 4,
+            },
+        ]
+        mock_hostapis.return_value = [{"name": "ASIO"}]
+
+        as_sel = AudioSelect()
+
+        self.assertEqual(as_sel.devices[0]["category"], "Other")
+        self.assertEqual(as_sel.devices[1]["category"], "Other")
+
+    @patch("audio_select.sd.query_devices")
+    @patch("audio_select.sd.query_hostapis")
+    def test_headphones_category(self, mock_hostapis, mock_devices):
+        """Test Speakers category for headphones."""
+        mock_devices.return_value = [
+            {
+                "name": "Headphones (USB Audio)",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            },
+        ]
+        mock_hostapis.return_value = [{"name": "WASAPI"}]
+
+        as_sel = AudioSelect()
+
+        self.assertEqual(as_sel.devices[0]["category"], "Speakers")
+
+    @patch("audio_select.sd.query_devices")
+    @patch("audio_select.sd.query_hostapis")
+    def test_input_category(self, mock_hostapis, mock_devices):
+        """Test Line In category for input devices."""
+        mock_devices.return_value = [
+            {
+                "name": "Audio Input Jack",
+                "hostapi": 0,
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+            },
+        ]
+        mock_hostapis.return_value = [{"name": "WASAPI"}]
+
+        as_sel = AudioSelect()
+
+        self.assertEqual(as_sel.devices[0]["category"], "Line In")

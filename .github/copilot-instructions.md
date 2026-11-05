@@ -1,71 +1,105 @@
 ## Purpose
 
-This repository is a small CLI utility for audio tone analysis. The authoritative implementation lives in `audio_stats.py`. These instructions are meant to help an AI coding agent be productive quickly by describing the big-picture flow, important patterns, how to run the project locally, and a few discovered gotchas.
+This repository is an extensible audio analysis toolkit with CLI support. It identifies tones, distortion products, noise floor, and computes audio metrics (THD, SNR, SFDR, etc). These instructions guide AI agents to be productive quickly through architecture patterns, workflows, conventions, and known implementation details.
 
 ## Big picture (what to know first)
 
-- Single-file CLI tool: most logic is in `audio_stats.py`. Key classes:
-  - `AudioAnalyzer` — core analysis pipeline (load/generate audio → window → FFT → component extraction → compute stats).
-  - `AudioStats` — container + pretty-print helpers for results.
-  - `AudioComp` — small struct for component frequency + power.
-- Data flow: load (or generate) audio → `get_freq`/truncate → `get_bins` (window + rFFT) → `get_comps` (iterative peak extraction, zero bins) → `analyze` (classify single/two-tone, compute SFDR/SNR/THD/etc) → output via `print` / table.
-- Why this structure: script-style CLI for quick measurements; numeric code uses numpy/scipy/librosa for signal ops and librosa for file I/O and tone generation.
+**Layered Architecture:**
+- **Audio Layer** (`audio.py`): Core data class — loads/generates audio, segments buffers, manages sample rate, detects silence, computes noise floor using `scipy.signal` and `soundfile`/`sounddevice`.
+- **Frequency Analysis** (`freq_bins.py`): FFT pipeline — applies Blackman–Harris window → `scipy.fft.rfft` → stores squared magnitude; provides bin↔freq conversion helpers.
+- **Component Extraction** (`component.py`, `analyzer.py`): Abstract `Analyzer` base class + concrete implementations (`ToneAnalyzer`, `NoiseAnalyzer`, `SweepAnalyzer`, `TimeAnalyzer`). Each `analyze()` method identifies components, classifies them (tone, distortion, spur, noise), and computes statistics.
+- **Statistics Output** (`tone_stats.py`, `time_stats.py`, `audio_stats.py`, `unit_stats.py`): Results containers with `to_dict()` and `summary()` formatting for tables, CSV export.
+- **CLI Entry Points** (`analyze.py`, `audio_analyzer.py`, `audio_player.py`, `generate.py`, `split.py`, `join.py`, `play.py`, `device_selector.py`): argparse-based scripts.
+
+**Data Flow:** Load audio (file or device) → segment/detect silence → FFT (freq_bins) → extract components (analyzer subclass) → classify (tone/distortion/spur) → compute metrics → format output.
 
 ## How to run (Windows PowerShell examples)
 
-- Install minimal dependencies (PowerShell):
-
+- Install dependencies:
 ```powershell
-python -m pip install numpy scipy librosa
+pip install -r requirements.txt
+# or via pyproject.toml / uv: uv sync
 ```
 
-- Generate test tones and show the table:
-
+- Generate test tones (`signals/` directory):
 ```powershell
-python .\audio_stats.py -g -t
+python .\generate.py
 ```
 
-- Analyze files matching a glob, print components and stats:
-
+- Analyze audio files matching a pattern (shows stats, components, noise floor):
 ```powershell
-python .\audio_stats.py "samples\*.wav" -c -s -t
+python .\analyze.py "samples\*.wav" -a -c 10 -s -v
+# -a: audio stats (noise floor), -c N: top N frequency components, -s: unit specs, -v: verbose
 ```
 
-Notes: `-g` = generate, `-c` = components, `-s` = statistics, `-t` = table.
+- Play audio:
+```powershell
+python .\play.py "samples\*.wav" -l 15.0
+```
+
+- Run tests:
+```powershell
+uv run pytest tests/ -v --cov=.
+```
 
 ## Project-specific conventions & patterns
 
-- CLI-first: add or change flags in `main()` (argparse) and ensure downstream `print` / `print_summary` / `print_header` keep formatting consistent.
-- Stats pairings: when adding a new metric, update both `AudioStats.stats()` (dict) and `AudioStats.stats_index()` to preserve presentation ordering.
-- FFT / bins conventions:
-  - `get_bins()` applies a Blackman–Harris window then `rfft` and stores squared magnitude in `self.bins`.
-  - `get_comps()` mutates `self.bins` by zeroing out ranges around found peaks — treat `self.bins` as single-use between `get_bins()` and `get_comps()`.
-  - Frequency mapping helpers: `bin_to_hz(bin)` and `freq_to_bin(freq)` are the canonical conversions — use them to keep unit consistency.
-- Component extraction: `get_comps()` extracts N peaks by repeatedly finding `bins.max()` and zeroing ±w_tol around it; the returned `self.comps` are in descending power order.
+**Analyzer Pattern:**
+- All `Analyzer` subclasses inherit from `analyzer.Analyzer` (abstract base class).
+- Each concrete analyzer (`ToneAnalyzer`, `NoiseAnalyzer`, `SweepAnalyzer`, `TimeAnalyzer`) implements:
+  - `analyze()` → calls `super().analyze()` (which computes `TimeStats` and calls `get_components()`) and returns its specific stats object (`ToneStats`, `FreqResp`, or `TimeStats`).
+  - `get_components()` → returns `Components` (list of `Component` objects with freq, power, category).
+  - `reset()` → reinitialize working state.
+  - `print()` → format and print results.
+- Component categories (from `util.Category`): `Tone`, `Harmonic`, `Distortion`, `Spurious`, `Noise`, `Band`, `Sweep`, `Silence`, `Unknown`.
+
+**Audio / Metadata:**
+- `Audio` class in `audio.py` manages sample loading, segmentation, silence detection, and noise floor computation.
+- `Metadata` in `metadata.py` stores audio name, segment info, sample rate (`fs`), etc.
+
+**FFT / Bins conventions:**
+- `FreqBins` in `freq_bins.py` applies a 7-term Blackman–Harris window, runs `scipy.fft.rfft`, and stores squared magnitude in `self.bins`.
+- `bin_to_freq(bin)` and `freq_to_bin(freq)` are canonical conversions — use them for unit consistency.
+- `tones` (`@cached_property`) extracts up to `MAX_TONES` peaks in descending power order and zeroes out their bins in a local copy to compute `self.noise`.
+
+**Statistics Output:**
+- `ToneAnalyzer` returns a `ToneStats` object with fields like `freq`, `thd_pct`, `snr_db`, `sfdr_db`; `TimeAnalyzer` returns a `TimeStats` object.
+- `get_stats()`, `get_dataframe()`, and `summary()` methods provide formatting for tables and CSV.
+
+**CLI conventions:**
+- Add flags in `main()` function with argparse; document in script docstring.
+- Use consistent argument names across scripts (e.g., `-c`/`--components`, `-s`/`--specs`).
 
 ## Integration points & dependencies
 
-- External libs: `numpy`, `scipy` (signal, fftpack), `librosa` (I/O & tone generator). Changes to signal processing must respect these APIs.
-- I/O: file load uses `librosa.load(fname, sr=None)` — it preserves original sample rate; downstream code expects `self.fs` to be set accordingly.
+- **External libs:** `numpy`, `scipy` (signal, fft), `soundfile` (I/O), `sounddevice` (device audio), `pandas` (data frames), `pytest` / `pytest-cov` (testing), `ruff` (linting).
+- **I/O:** `soundfile` + `Audio.read()` load WAV/FLAC preserving original sample rate; `sounddevice.InputStream` captures from device.
+- **Audio generation:** `generate.py` creates test signals (tones, sweeps, noise, IMD products) and saves to `signals/` and `examples/` directories.
 
-## Important implementation notes & gotchas (discovered while reading the code)
+## Important implementation notes & gotchas
 
-- Two-tone detection check looks suspicious: in `analyze()` the condition
-  `abs(self.comps[1].freq - 2*self.comps[0].pwr) < 5` appears to compare frequency against power (likely a typo). When modifying two-tone logic, verify this carefully.
-- `get_freq()` uses zero-crossings to infer fundamental and truncates the audio to the first/last crossing — this shortens the buffer and changes subsequent FFT resolution. Tests or edits that assume full-length buffers will fail unless handled.
-- `db()` uses `librosa.power_to_db(..., amin=1e-12)`: expect large negative dB values instead of -inf for tiny powers.
-- `get_comps()` sets `self.dc` to sum of low-frequency bins then zeroes them. This mutates `self.bins`; if you need original bins keep a copy.
+- **Two-tone classification:** `ToneAnalyzer.get_components()` compares second-largest power against adaptive `_two_tone_threshold` and distance to second harmonic to distinguish two-tone from single-tone with distortion.
+- **Silence detection:** `Audio._detect_segments()` / `Audio.get_segments()` finds active and quiet regions; thresholds are configurable via `DEFAULT_SILENCE_THRESH_RATIO`, `SILENCE_MIN_THRESHOLD`, and `SILENCE_WINDOW_SECS` in `constants.py`.
+- **DC removal:** `FreqBins.__init__()` subtracts the mean (`self.dc`) from the time-domain signal before windowing and FFT.
+- **Noise floor:** Tracked via `Audio.avg_noise_floor` across noise/silence segments.
+- **dB scaling:** `decibels.py` provides `db()` and `db_to_pwr_ratio()` bounded by `MIN_PWR` (`1e-12`, `-120 dB`) so zero/tiny powers yield `-120.0 dB` rather than `-inf`.
+- **Sample rate preservation:** `Audio.read()` respects original file sample rate; any resampling must be explicit.
 
 ## Editing guidance (how to change code safely)
 
-- When updating numeric/algorithmic code, add a small deterministic unit test that uses `AudioAnalyzer.gen_test_audio()` (existing generator) so you can assert expected dB differences and THD%. Put tests under `tests/` and keep them small and deterministic.
-- If you add new dependencies, also add a `requirements.txt` and update this README and CI as needed.
-- Preserve the CLI behavior and `AudioStats` formatting unless intentionally changing output contracts.
+- **Numeric/algorithmic changes:** Add deterministic unit test in `tests/` using synthetic signals (`generate.py`) or files from `signals/` / `examples/`. Assert THD%, frequency, SNR within expected tolerances.
+- **New metrics:** Update the relevant `Analysis` subclass (`TimeStats`, `ToneStats`, `FreqResp`, `UnitStats`) fields and formatting methods to stay consistent.
+- **New analyzer:** Inherit from `Analyzer`, implement `analyze()`, `get_components()`, `reset()`, `print()`. Add corresponding test file `test_<analyzer_name>.py`.
+- **CLI flags:** Add to argparse in script's `main()` function; ensure help text is clear and defaults match intended behavior.
+- **Dependencies:** Update both `requirements.txt` and `pyproject.toml`; note that `pyproject.toml` is primary (`requires-python = ">=3.13"`).
 
 ## Key files to inspect for future changes
 
-- `audio_stats.py` — main implementation and CLI (single source of truth for behavior/formatting). 
-
----
-
-If anything here is unclear or you want the instructions expanded (CI snippets, unit-test templates, or a requirements file), tell me which section to expand and I will update the document.
+- `analyzer.py` — abstract base class for all analyzer implementations.
+- `audio.py` — core Audio data class, I/O, silence detection, segment management.
+- `tone_analyzer.py` — primary single/two-tone analyzer; exemplifies component extraction and distortion classification.
+- `analyze.py` — main CLI entry point for batch file analysis.
+- `constants.py` — all configurable thresholds and defaults (FFT window, silence detection, min/max frequencies, etc).
+- `freq_bins.py` — FFT pipeline and bin↔frequency conversions.
+- `component.py` — Component and Components data classes.
+- `tests/test_tone_analyzer.py` — example of pattern-based test discovery and tolerance assertion.

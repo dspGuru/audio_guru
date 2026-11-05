@@ -4,7 +4,7 @@ import math
 
 from analysis import Analysis
 from audio import Audio
-from constants import MIN_DB, MIN_PWR
+from constants import MIN_PWR
 from decibels import db_str
 
 __all__ = ["ToneStats"]
@@ -72,7 +72,7 @@ class ToneStats(Analysis):
         if noise > MIN_PWR:
             self.snr = sig / noise
         else:
-            self.snr = -MIN_DB
+            self.snr = sig / MIN_PWR if sig > 0.0 else 1.0 / MIN_PWR
 
         # Calculate SFDR
         spur = max(spur, dist)

@@ -145,6 +145,8 @@ class Analyzer(ABC):
         ValueError
             If the audio segment is too short to analyze.
         """
+        # Select either the provided segment or create a new one spanning the
+        # entire audio duration
         if segment is None:
             segment = Segment(self.fs, 0, len(self.audio))
         else:
@@ -184,6 +186,7 @@ class Analyzer(ABC):
         print_head : bool, optional
             Whether to print the CSV head (default is False).
         """
+        # Create path and ensure parent directories exist
         df = self.get_dataframe()
         p = Path(filepath)
         if p.parent and not p.parent.exists():

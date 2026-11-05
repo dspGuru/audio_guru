@@ -36,7 +36,10 @@ class AudioAnalysis:
 
     def __str__(self) -> str:
         """Return string representation of analysis result."""
-        return f"Analysis(segment={self.segment}, result={self.analysis}, components={self.components})"
+        return (
+            f"Analysis(segment={self.segment}, result={self.analysis}, "
+            f"components={self.components})"
+        )
 
 
 class AudioAnalyzer:
@@ -115,7 +118,7 @@ class AudioAnalyzer:
         if isinstance(analysis, TimeStats):
             time_stats = analysis
         else:
-            time_stats = TimeStats(audio)
+            time_stats = getattr(analyzer, "time_stats", None) or TimeStats(audio)
             self.analysis_list.append(time_stats)
 
         if self.verbose:
@@ -247,20 +250,21 @@ class AudioAnalyzer:
             True if recording was successful, False otherwise.
         """
         try:
+            # Create the audio object and print status
             self.audio = Audio(name="Device Input")
             if not quiet:
                 print("Reading from default audio device...")
 
-            # Start the analysis worker thread
+            # Initialize analysis queue and worker thread
             q: queue.Queue = queue.Queue()
             worker = threading.Thread(target=self._analyze_worker, args=(q,))
             worker.start()
 
-            # Calculate max blocks if duration is set
+            # Determine the number of blocks to record based on duration
             max_blocks = None
             if duration > 0:
-                # Calculate blocks: (duration * fs) / blocksize
-                # Since fs might trigger update of blocksize, ensure we use current values
+                # Calculate blocks: (duration * fs) / blocksize. Since fs might
+                # trigger update of blocksize, ensure we use current values.
                 max_blocks = int(duration * self.audio.fs / self.audio.blocksize) + 1
 
             # Read the audio file in blocks
@@ -269,7 +273,7 @@ class AudioAnalyzer:
                 while self.audio.read_block():
                     num_blocks += 1
                     if not quiet:
-                        print(f".", flush=True, end="")
+                        print(".", flush=True, end="")
 
                     # Analyze each audio segment
                     for audio in self.audio:

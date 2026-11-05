@@ -161,13 +161,20 @@ MIN_TWO_TONE_RATIO: float = 1e-2
 """Minimum ratio for two-tone detection (-20 dB). Second tone must be at
 least this large relative to the first tone."""
 
+TWO_TONE_THRESHOLD_MIN_DB: float = -20.0
+"""Minimum (most sensitive) two-tone threshold in dB for low-noise conditions."""
+
+TWO_TONE_THRESHOLD_MAX_DB: float = -10.0
+"""Maximum (least sensitive) two-tone threshold in dB for high-noise conditions."""
+
 
 # -----------------------------------------------------------------------------
 # Quadrature Detection
 # -----------------------------------------------------------------------------
 
 QUADRATURE_SAMPLE_RATIO: float = 0.5
-"""Ratio of samples that must have consistent magnitude for quadrature detection."""
+"""Ratio of samples that must have consistent magnitude for quadrature
+detection."""
 
 QUADRATURE_MAGNITUDE_TOLERANCE: float = 0.2
 """Relative tolerance for comparing complex magnitudes to peak amplitude."""

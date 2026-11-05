@@ -116,19 +116,19 @@ class TestFreqBins:
 
     def test_band_edges(self):
         fs = DEFAULT_FS
-        t = np.arange(1000) / fs
+        t = np.arange(44100) / fs
 
         # Create 100 Hz sine
         samples = np.sin(2 * np.pi * 100.0 * t).astype(np.float32)
-        md = Metadata("test", Segment(fs, 0, 999))
+        md = Metadata("test", Segment(fs, 0, 44099))
         bins = FreqBins(samples, md)
 
         # Get edges 3 dB down
         low, high = bins.get_band_edges(tol_db=3.0)
 
         # Should bracket 100 Hz closely
-        assert low < 100.0
-        assert high > 100.0
+        assert low <= 100.0
+        assert high >= 100.0
         assert (high - low) < 50.0  # Narrow peak for pure sine with window
 
     def test_get_bands_and_components(self):

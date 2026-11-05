@@ -711,7 +711,7 @@ def test_iterator_device_max_length():
 
     # Mock open_device to set stream
     with unittest.mock.patch("sounddevice.InputStream") as mock_input_stream:
-        a.open_device()
+        a.open_device(quiet=True)
         assert a.stream is not None
 
         # Ensure samples are large enough for the segment to be valid in select()

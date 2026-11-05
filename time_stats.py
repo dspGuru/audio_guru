@@ -101,12 +101,12 @@ class TimeStats(Analysis):
     @property
     def crest(self) -> float:
         """Return the crest factor (max/RMS)."""
-        return self.max / self.rms if self.rms > 0.0 else 0.0
+        return max(abs(self.min), abs(self.max)) / self.rms if self.rms > 0.0 else 0.0
 
     @property
     def dbfs(self) -> float:
         """Return the maximum signal level in dBFS."""
-        return dbv(self.max)
+        return dbv(max(abs(self.min), abs(self.max)))
 
     def print(self) -> None:
         """Print the statistics."""

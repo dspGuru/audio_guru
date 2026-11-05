@@ -88,8 +88,8 @@ def alias_freq(freq: float, fs: float) -> float:
     freq = abs(freq)
 
     # Wrap positive frequency above fs
-    while freq > fs:
-        freq -= fs
+    if fs > 0.0 and freq > fs:
+        freq %= fs
 
     # If frequency is above Nyquist, calculate the aliased frequency
     if freq > 0.5 * fs:

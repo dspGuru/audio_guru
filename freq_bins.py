@@ -5,7 +5,6 @@ from functools import cached_property
 
 import numpy as np
 from scipy.fft import rfft
-from scipy import signal
 
 from component import Component, Components
 from constants import MAX_BINS_PER_TONE, MAX_TONES, MIN_PWR
@@ -17,8 +16,9 @@ __all__ = ["FreqBins"]
 
 # Module-level cache for window functions by (length, symmetry)
 _window_cache: dict[tuple[int, bool], np.ndarray] = {}
+_window_s2_cache: dict[tuple[int, bool], float] = {}
 
-# Seven-term minimum sidelobe Blackman-Harris coefficients from reference
+# Seven-term minimum sidelobe Blackman-Harris coefficients from reference below
 BH7_COEFFS = np.asarray(
     [
         0.271051400693424,
@@ -64,9 +64,38 @@ def blackmanharris7(M: int, sym: bool = True) -> np.ndarray:
         return _window_cache[cache_key]
 
     # Calculate window
-    w = signal.windows.general_cosine(M, BH7_COEFFS, sym=sym)
+    # Calculate window using Chebyshev recurrence (1 cos evaluation instead of 6)
+    if M <= 0:
+        w = np.array([], dtype=np.float32)
+        s2 = 0.0
+    elif M == 1:
+        w = np.ones(1, dtype=np.float32)
+        s2 = 1.0
+    else:
+        n_pts = M if sym else M + 1
+        c1 = np.linspace(-np.pi, np.pi, n_pts, dtype=np.float32)[:M]
+        np.cos(c1, out=c1)
+        a = BH7_COEFFS
+        p6 = np.float32(32.0 * a[6])
+        p5 = np.float32(16.0 * a[5])
+        p4 = np.float32(8.0 * a[4] - 48.0 * a[6])
+        p3 = np.float32(4.0 * a[3] - 20.0 * a[5])
+        p2 = np.float32(2.0 * a[2] - 8.0 * a[4] + 18.0 * a[6])
+        p1 = np.float32(a[1] - 3.0 * a[3] + 5.0 * a[5])
+        p0 = np.float32(a[0] - a[2] + a[4] - a[6])
+        w = np.full_like(c1, p6)
+        for pk in (p5, p4, p3, p2, p1, p0):
+            w *= c1
+            w += pk
+        if not sym and M > 12:
+            s2 = float(a[0] * a[0] + 0.5 * np.sum(a[1:] * a[1:]))
+        else:
+            s2 = float(np.mean(w * w))
+    _window_s2_cache[cache_key] = s2
 
-    # Cache and return
+    # Cache and return (bound cache size to avoid unbounded memory use)
+    if len(_window_cache) >= 16:
+        _window_cache.clear()
     _window_cache[cache_key] = w
     return w
 
@@ -128,12 +157,13 @@ class FreqBins:
                     x = x[:, 0]
                 case Channel.Right:
                     x = x[:, 1]
-                case Channel.Stereo:
-                    x = np.mean(x, axis=1)
+                case Channel.Stereo | Channel.Unknown:
+                    if x.shape[1] == 2:
+                        x = (x[:, 0] + x[:, 1]) * np.float32(0.5)
+                    else:
+                        x = np.mean(x, axis=1)
                 case Channel.Difference:
                     x = x[:, 0] - x[:, 1]
-                case Channel.Unknown:
-                    x = np.mean(x, axis=1)
         else:
             self.channel = Channel.Unknown
 
@@ -150,16 +180,99 @@ class FreqBins:
                 x -= self.dc
 
         # Window the signal
-        w = blackmanharris7(len(x))
+        w = blackmanharris7(len(x), sym=False)
         xw = x * w
 
         # Compute normalized real FFT and convert to power spectral density
         yf = rfft(xw, norm="forward")
-        self.bins = (yf * yf.conjugate()).real
+        bins = yf.real * yf.real + yf.imag * yf.imag
+        if len(w) > 0:
+            s2 = _window_s2_cache.get((len(x), False))
+            if s2 is None:
+                s2 = float(np.mean(w * w))
+            if s2 > 0.0:
+                bins *= 1.0 / s2
+                if len(bins) > 2:
+                    bins[1:-1] *= 2.0
+                elif len(bins) == 2 and self.n_samples % 2 != 0:
+                    bins[1:] *= 2.0
+        self.bins = bins
 
     def __len__(self):
         """Return the length of the entire audio data."""
         return len(self.bins)
+
+    def _parabolic_peak(self, bin_idx: int, bins: np.ndarray) -> tuple[float, float]:
+        """Estimate peak frequency and power using parabolic interpolation.
+
+        Fits a parabola through three bins (left, center, right) around the peak
+        to provide sub-bin frequency accuracy and power correction.
+
+        Parameters
+        ----------
+        bin_idx : int
+            Center bin index.
+        bins : np.ndarray
+            Power spectrum bins.
+
+        Returns
+        -------
+        tuple[float, float]
+            Interpolated frequency (in Hz) and corrected power.
+        """
+        n_bins = len(bins)
+        if bin_idx <= 0 or bin_idx >= n_bins - 1:
+            freq = bin_idx * self.fs / self.n_samples
+            return freq, max(float(bins[bin_idx]), 0.0) if n_bins > 0 else 0.0
+
+        y0 = float(bins[bin_idx - 1])
+        y1 = float(bins[bin_idx])
+        y2 = float(bins[bin_idx + 1])
+
+        # Parabolic peak position relative to center bin
+        # Log-parabolic interpolation when all 3 bins are above MIN_PWR
+        if y0 > MIN_PWR and y1 > MIN_PWR and y2 > MIN_PWR:
+            ly0, ly1, ly2 = float(np.log(y0)), float(np.log(y1)), float(np.log(y2))
+            denom = 2.0 * ly1 - ly0 - ly2
+        else:
+            ly0, ly1, ly2 = y0, y1, y2
+            denom = 2.0 * y1 - y0 - y2
+        if abs(denom) > MIN_PWR:
+            delta_bin = float(np.clip(0.5 * (ly2 - ly0) / denom, -0.5, 0.5))
+        else:
+            delta_bin = 0.0
+
+        # Interpolated peak power
+        peak_power = y1 - 0.25 * (y0 - y2) * delta_bin
+
+        # Convert to frequency
+        interpolated_bin = bin_idx + delta_bin
+        freq = interpolated_bin * self.fs / self.n_samples
+
+        return freq, max(peak_power, 0.0)
+
+    def adaptive_max_bins(self, freq: float, quality_factor: float = 10.0) -> int:
+        """Compute adaptive bin tolerance based on frequency and signal quality.
+
+        Parameters
+        ----------
+        freq : float
+            Center frequency in Hz.
+        quality_factor : float
+            Quality factor Q (bandwidth = freq / Q). Default 10 assumes narrow tone.
+
+        Returns
+        -------
+        int
+            Number of bins to use for component extraction (minimum 5, maximum 50).
+        """
+        if freq <= 0:
+            return MAX_BINS_PER_TONE
+        # Bins needed to span bandwidth = freq / Q
+        bandwidth = freq / quality_factor
+        bins_for_bandwidth = int(np.ceil(bandwidth * self.n_samples / self.fs))
+        # Clamp to reasonable range
+        return max(5, min(50, max(bins_for_bandwidth, MAX_BINS_PER_TONE // 2)))
 
     @property
     def fs(self) -> int:
@@ -233,7 +346,9 @@ class FreqBins:
 
         # Return ripple power in the specified range
         if bin2 > bin1 and bin1 >= 0 and bin2 < len(self.bins):
-            return float(np.max(self.bins[bin1:bin2]) - np.min(self.bins[bin1:bin2]))
+            return float(
+                np.max(self.bins[bin1 : bin2 + 1]) - np.min(self.bins[bin1 : bin2 + 1])
+            )
         else:
             return 0.0
 
@@ -252,7 +367,7 @@ class FreqBins:
         """
         a = np.abs(self.bins)
         max_val = np.max(a)
-        threshold = max_val * 10 ** (-tol_db / 20)
+        threshold = max_val * 10 ** (-tol_db / 10)
 
         # Find indices where bins are above the threshold
         above_threshold = np.where(a >= threshold)[0]
@@ -313,7 +428,7 @@ class FreqBins:
         low_freq = 0.0
         nyquist = 0.5 * self.fs
         step = nyquist / max_components
-        high_freq = step - 1
+        high_freq = step
 
         # Iterate through each frequency band and compute its mean power
         while low_freq < nyquist:
@@ -342,38 +457,66 @@ class FreqBins:
         bins = np.absolute(self.bins)
         n_bins = len(bins)
 
-        # Use scipy.signal.find_peaks to find all peaks
-        peaks, _ = signal.find_peaks(bins)
-        if len(peaks) == 0:
+        # Vectorized peak detection: faster than scipy.signal.find_peaks
+        # Find local maxima by comparing with neighbors
+        if n_bins < 3:
             self.noise = float(np.sum(bins))
             return tones
 
+        # Vectorized approach: bins where gradient changes from positive to
+        # negative
+        # Much faster than scipy.signal.find_peaks for large arrays
+        diffs = np.diff(bins)
+        # Left derivative (positive = increasing)
+        is_peak = np.empty(n_bins, dtype=bool)
+        is_peak[0] = (diffs[0] <= 0) and (bins[0] > 0)
+        is_peak[-1] = (diffs[-1] >= 0) and (bins[-1] > 0)
+        is_peak[1:-1] = (diffs[:-1] >= 0) & (diffs[1:] <= 0) & (bins[1:-1] > 0)
+        # Right derivative (negative = decreasing)
+
+        # Local maxima: where left derivative >= 0 AND right derivative <= 0
+
+        peak_indices = np.where(is_peak)[0]
+
+        if len(peak_indices) == 0:
+            self.noise = float(np.sum(bins))
+            return tones
+
+        # Get top MAX_TONES peaks by power (vectorized, single-pass)
+        peak_powers = bins[peak_indices]
+        n_top = min(MAX_TONES, len(peak_indices))
+
+        # Use argpartition for O(n) partial sort instead of O(n log n) full sort
+        if len(peak_powers) <= MAX_TONES:
+            # If fewer peaks than max, use all and sort
+            top_peak_order = np.argsort(-peak_powers)  # Descending order
+            sorted_peak_indices = peak_indices[top_peak_order]
+        else:
+            # Partition to find top N, then sort just those
+            top_local_indices = np.argpartition(-peak_powers, n_top - 1)[:n_top]
+            # Sort the top N by power
+            top_peak_order = top_local_indices[
+                np.argsort(-peak_powers[top_local_indices])
+            ]
+            sorted_peak_indices = peak_indices[top_peak_order]
+
         # Pre-compute frequency scale once (avoids repeated bin_to_freq calls)
         freq_scale = self.fs / self.n_samples
-        all_freqs = np.arange(n_bins) * freq_scale
 
-        # Get peak values and sort by power (descending), take top MAX_TONES
-        peak_values = bins[peaks]
-        n_top = min(MAX_TONES, len(peaks))
-        # Use argpartition for efficient partial sorting of top peaks
-        top_indices = np.argpartition(peak_values, -n_top)[-n_top:]
-        top_indices = top_indices[np.argsort(peak_values[top_indices])[::-1]]
-        sorted_peaks = peaks[top_indices]
-
-        # Pre-compute gradient change indices to vectorize monotonic bound detection
+        # Pre-compute gradient change indices to vectorize monotonic bound
+        # detection
         # valley_left: where bins decrease (potential left tone boundary)
         # valley_right: where bins increase (potential right tone boundary)
-        diffs = np.diff(bins)
         valley_left = np.where(diffs < 0)[0]
         valley_right = np.where(diffs > 0)[0]
 
         # Batch find monotonic bounds for all peaks using binary search
-        left_indices = np.searchsorted(valley_left, sorted_peaks)
-        right_indices = np.searchsorted(valley_right, sorted_peaks)
+        left_indices = np.searchsorted(valley_left, sorted_peak_indices)
+        right_indices = np.searchsorted(valley_right, sorted_peak_indices)
 
         # Process top MAX_TONES peaks with pre-computed bounds
         last_bin = n_bins - 1
-        for i, center in enumerate(sorted_peaks):
+        for i, center in enumerate(sorted_peak_indices):
             center = int(center)
 
             # Left bound: find where bins begin decreasing toward center
@@ -393,14 +536,26 @@ class FreqBins:
                 first = max(0, center - half)
                 last = min(last_bin + 1, center + half)
 
-            # Calculate power-weighted centroid frequency for better accuracy
+            # Use parabolic interpolation for sub-bin frequency accuracy
+            interp_freq, _ = self._parabolic_peak(center, bins)
+
+            # Calculate power-weighted centroid frequency for robustness
             bin_pwrs = bins[first:last]
             total_power = bin_pwrs.sum()
             if total_power > 0:
-                # Weighted average: sum(freq * power) / sum(power)
-                freq = float((all_freqs[first:last] * bin_pwrs).sum() / total_power)
+                # Blend parabolic (50%) and weighted centroid (50%) for
+                # robustness
+                c_first = max(first, center - 3)
+                c_last = min(last, center + 4)
+                core_pwrs = bins[c_first:c_last]
+                core_sum = float(core_pwrs.sum())
+                centroid_freq = float(
+                    (np.arange(c_first, c_last) * freq_scale * core_pwrs).sum()
+                    / core_sum
+                )
+                freq = 0.5 * interp_freq + 0.5 * centroid_freq
             else:
-                freq = all_freqs[center]
+                freq = interp_freq
 
             # Create tone component
             tone = Component(
@@ -408,8 +563,8 @@ class FreqBins:
                 float(total_power),
                 0.0,
                 Category.Tone,
-                all_freqs[first],
-                all_freqs[last] if last < n_bins else all_freqs[-1],
+                first * freq_scale,
+                (last if last < n_bins else n_bins - 1) * freq_scale,
             )
 
             # Zero out tone bins for noise calculation
@@ -446,7 +601,12 @@ class FreqBins:
         max_comp_pwr = tones[0].pwr
 
         # Compare peak to average of remaining tones to assess signal dominance
-        avg_tone_pwr = sum([tone.pwr for tone in tones]) / (len(tones) - 1)
+        if len(tones) == 1:
+            return False
+        rem_pwr = sum([tone.pwr for tone in tones[1:]])
+        if rem_pwr <= MIN_PWR:
+            return False
+        avg_tone_pwr = rem_pwr / (len(tones) - 1)
         snr_db = db(max_comp_pwr / avg_tone_pwr)
 
         # Return True if SNR is less than the threshold
@@ -536,7 +696,8 @@ class FreqBins:
             # Calculate bin difference
             bin_diff = self.freq_to_bin(abs(freq - target_freq))
 
-            # Return True if frequency is within tolerance of any frequency in the list
+            # Return True if frequency is within tolerance of any frequency in
+            # the list
             if bin_diff <= bins_per_component:
                 return True
 

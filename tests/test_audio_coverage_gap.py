@@ -69,7 +69,7 @@ def test_read_block_overflow(capsys):
         # Return data and overflow=True
         mock_stream.read.return_value = (np.zeros((100, 2), dtype=np.float32), True)
 
-        a.open_device()
+        a.open_device(quiet=True)
 
         # read_block will use the active stream
         assert a.read_block() is True

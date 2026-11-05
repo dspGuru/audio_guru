@@ -15,6 +15,7 @@ from constants import (
     DEFAULT_FS,
     DEFAULT_GEN_SECS,
     DEFAULT_GEN_SILENCE_SECS,
+    SILENCE_MIN_THRESHOLD,
 )
 from decibels import db_to_pwr_ratio, MIN_PWR
 from util import Channel, Category
@@ -605,7 +606,7 @@ def write_examples(path: str = "./examples") -> None:
 
     # Generate noise-floor audio
     print("Generating noise-floor audio")
-    audio = noise(amp=1e-4, silence_secs=silence_secs)  # -80 dBFS
+    audio = noise(amp=SILENCE_MIN_THRESHOLD, silence_secs=silence_secs)  # -80 dBFS
     audio.name = "example_noise-floor.wav"
     examples.append(audio)
 

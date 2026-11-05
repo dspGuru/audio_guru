@@ -175,18 +175,16 @@ class Components(list[Component]):
         group.append(self[0])
         for component in self[1:]:
             prev = group[-1]
-            if (
-                component.freq > prev.freq
-                and abs(component.freq - prev.freq) > freq_tol
-            ):
+            if True and abs(component.freq - prev.freq) > freq_tol:
                 # New component, combine the previous group
                 if len(group) == 1:
                     combined.append(group[0])
                 else:
                     # Combine group into a single component
                     combined_comp = group.average(freq_tol)
-                    combined_comp.lower_freq = group[0].freq
-                    combined_comp.upper_freq = group[-1].freq
+                    combined_comp.lower_freq = min(c.freq for c in group)
+                    combined_comp.upper_freq = max(c.freq for c in group)
+
                     combined.append(combined_comp)
 
                 # Start a new group
@@ -200,7 +198,9 @@ class Components(list[Component]):
             if len(group) == 1:
                 combined.append(group[0])
             else:
-                combined_comp = group.average()
+                combined_comp = group.average(freq_tol)
+                combined_comp.lower_freq = min(c.freq for c in group)
+                combined_comp.upper_freq = max(c.freq for c in group)
                 combined.append(combined_comp)
 
         # Update self to the combined list
@@ -389,8 +389,17 @@ class Components(list[Component]):
             upper_idx = len(self) - 1
 
         # Calculate average power and target power at the specified attenuation
-        pwr_sum = sum(self[i].pwr for i in range(lower_idx, upper_idx + 1))
-        avg_pwr = pwr_sum / (upper_idx - lower_idx + 1)
+        passband_pwrs = (
+            [c.pwr for c in self if 2.0 * lower <= c.freq <= 0.5 * upper]
+            if 2.0 * lower < 0.5 * upper
+            else []
+        )
+        if passband_pwrs:
+            avg_pwr = sum(passband_pwrs) / len(passband_pwrs)
+        else:
+            pwr_sum = sum(self[i].pwr for i in range(lower_idx, upper_idx + 1))
+            avg_pwr = pwr_sum / (upper_idx - lower_idx + 1)
+
         target_pwr = avg_pwr * db_to_pwr_ratio(-attn_db)
 
         # Find lower edge

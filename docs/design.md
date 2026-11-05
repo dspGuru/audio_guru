@@ -59,6 +59,10 @@ Audio Guru follows a layered architecture separating concerns into distinct resp
 |--------|---------|
 | `analyze.py` | CLI for analyzing audio files/devices |
 | `generate.py` | Signal generation utilities and CLI |
+| `play.py` | CLI for playing audio files |
+| `split.py` | CLI for splitting audio files into segments |
+| `join.py` | CLI for joining audio files with optional silence |
+| `device_selector.py` | CLI for listing and selecting audio devices |
 
 ### Core Data
 
@@ -69,6 +73,9 @@ Audio Guru follows a layered architecture separating concerns into distinct resp
 | `segment.py` | Time region descriptors |
 | `constants.py` | Library-wide constants and defaults |
 | `util.py` | Enums (Category, Channel) and helpers |
+| `audio_list.py` | Collection of Audio objects for batch I/O |
+| `audio_player.py` | Audio playback wrapper around sounddevice |
+| `audio_select.py` | Device enumeration, categorization, and sorting |
 
 ### Signal Processing
 
@@ -98,6 +105,7 @@ Audio Guru follows a layered architecture separating concerns into distinct resp
 | `time_stats.py` | RMS, crest factor, phase metrics |
 | `freq_resp.py` | Frequency response metrics |
 | `audio_stats.py` | Aggregated statistics container |
+| `unit_stats.py` | Device-under-test unit specification summary |
 
 ---
 
@@ -266,7 +274,7 @@ AudioAnalyzer.read(pattern)
     │   for segment_audio in audio:         │
     │       │                               │
     │       ▼                               │
-    │   _analyze_segment(segment_audio)     │
+    │   AudioAnalyzer.analyze(segment_audio)│
     │       │                               │
     │       ├── Detect category             │
     │       ├── Select analyzer             │
@@ -284,7 +292,7 @@ AudioAnalyzer.read(pattern)
 `AudioAnalyzer` routes segments to specialized analyzers based on detected category:
 
 ```python
-analyzer_classes = {
+    analysis_classes = {
     Category.Noise: NoiseAnalyzer,
     Category.Silence: TimeAnalyzer,
     Category.Sweep: SweepAnalyzer,
@@ -326,7 +334,7 @@ Analyzer (ABC)
 │   └── Produces: ToneStats, Components
 │
 ├── NoiseAnalyzer
-│   └── Produces: NoiseAnalysis (wraps FreqResp), Components
+│   └── Produces: FreqResp, Components
 │
 ├── SweepAnalyzer
 │   └── Produces: FreqResp, Components
@@ -360,7 +368,7 @@ Analysis (ABC)
     ├── TimeStats      # RMS, DC, crest, phase
     ├── FreqResp       # Ripple, band edges
     ├── Component      # Single frequency point
-    └── NoiseAnalysis  # Wraps FreqResp + bands
+    └── UnitStats      # Aggregated unit specifications
 ```
 
 For metric calculation details, see [Audio Performance Metrics](overview.md#audio-performance-metrics).
@@ -387,11 +395,11 @@ with Audio().open(fname) as audio:
 ### Lazy Initialization (FreqBins)
 
 ```python
-@property
+@cached_property
 def bins(self) -> FreqBins:
-    if self._bins is None:
-        self._bins = FreqBins(self.selected_samples, self.md, self.channel)
-    return self._bins
+    return FreqBins(self.selected_samples, self.md, self.segment.channel)
+
+
 ```
 
 **Benefits:**
@@ -404,7 +412,7 @@ def bins(self) -> FreqBins:
 ```python
 def _get_analyzer(self, audio: Audio) -> Analyzer:
     cat = audio.cat
-    analyzer_class = self.analyzer_classes.get(cat, TimeAnalyzer)
+    analyzer_class = self.analysis_classes.get(cat, TimeAnalyzer)
     return analyzer_class(audio)
 ```
 
@@ -418,16 +426,20 @@ def _get_analyzer(self, audio: Audio) -> Analyzer:
 ```python
 class Audio:
     def __iter__(self):
-        self.segments = self.get_segments()
-        self._seg_idx = 0
+        if not getattr(self, "_segments_current", False):
+            self.segments = self.get_segments()
+        self._segments_current = False
+
         return self
 
     def __next__(self) -> "Audio":
-        if self._seg_idx >= len(self.segments):
+        if not self.segments or not self.segments[0].complete:
             raise StopIteration
-        segment = self.segments[self._seg_idx]
-        self._seg_idx += 1
-        return self._create_segment_audio(segment)
+        segment = self.segments.pop(0)
+        self.select(segment)
+        return self.copy(self.segment)
+
+
 ```
 
 **Benefits:**
@@ -499,7 +511,7 @@ class MyStats(Analysis):
 3. **Register in AudioAnalyzer**:
 
 ```python
-analyzer_classes[Category.MyCategory] = MyAnalyzer
+analysis_classes[Category.MyCategory] = MyAnalyzer
 ```
 
 ### Adding a New Metric
@@ -560,13 +572,18 @@ Then modify `FreqBins.__init__` to use the new window.
 `AudioAnalyzer` uses a worker thread for analysis:
 
 ```python
-def _analysis_worker(self):
+def _analyze_worker(self):
     while True:
-        audio = self.analysis_queue.get()
-        if audio is None:
+        msg = self.msg_queue.get()
+        if msg is None:
             break
-        self._analyze_segment(audio)
-        self.analysis_queue.task_done()
+
+        self.analyze(msg)
+        self.msg_queue.task_done()
+
+
+
+
 ```
 
 **Thread Safety:**
@@ -601,7 +618,7 @@ with Audio().open(large_file) as audio:
 
 ```python
 # Clear cached bins to release memory
-audio._bins = None
+delattr(audio, "bins")
 ```
 
 ### Component List Growth

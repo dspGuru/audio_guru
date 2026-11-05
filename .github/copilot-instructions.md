@@ -6,10 +6,10 @@ This repository is an extensible audio analysis toolkit with CLI support. It ide
 
 **Layered Architecture:**
 - **Audio Layer** (`audio.py`): Core data class — loads/generates audio, segments buffers, manages sample rate, detects silence, computes noise floor using `scipy.signal` and `soundfile`/`sounddevice`.
-- **Frequency Analysis** (`freq_bins.py`): FFT pipeline — applies Blackman–Harris window → `scipy.fft.rfft` → stores squared magnitude; provides bin↔freq conversion helpers.
+- **Frequency Analysis** (`freq_bins.py`): FFT pipeline — applies Blackman–Harris window → `scipy.fft.rfft` → stores window-compensated single-sided power in `self.bins`; provides bin↔freq conversion helpers.
 - **Component Extraction** (`component.py`, `analyzer.py`): Abstract `Analyzer` base class + concrete implementations (`ToneAnalyzer`, `NoiseAnalyzer`, `SweepAnalyzer`, `TimeAnalyzer`). Each `analyze()` method identifies components, classifies them (tone, distortion, spur, noise), and computes statistics.
 - **Statistics Output** (`tone_stats.py`, `time_stats.py`, `audio_stats.py`, `unit_stats.py`): Results containers with `to_dict()` and `summary()` formatting for tables, CSV export.
-- **CLI Entry Points** (`analyze.py`, `audio_analyzer.py`, `audio_player.py`, `generate.py`, `split.py`, `join.py`, `play.py`, `device_selector.py`): argparse-based scripts.
+- **CLI Entry Points** (`analyze.py`, `generate.py`, `split.py`, `join.py`, `play.py`, `device_selector.py`) and supporting orchestration/I/O classes (`audio_analyzer.py`, `audio_player.py`, `audio_select.py`): argparse-based scripts and helpers.
 
 **Data Flow:** Load audio (file or device) → segment/detect silence → FFT (freq_bins) → extract components (analyzer subclass) → classify (tone/distortion/spur) → compute metrics → format output.
 
@@ -58,7 +58,7 @@ uv run pytest tests/ -v --cov=.
 - `Metadata` in `metadata.py` stores audio name, segment info, sample rate (`fs`), etc.
 
 **FFT / Bins conventions:**
-- `FreqBins` in `freq_bins.py` applies a 7-term Blackman–Harris window, runs `scipy.fft.rfft`, and stores squared magnitude in `self.bins`.
+- `FreqBins` in `freq_bins.py` applies a 7-term Blackman–Harris window, runs `scipy.fft.rfft`, and stores window-compensated single-sided power in `self.bins`.
 - `bin_to_freq(bin)` and `freq_to_bin(freq)` are canonical conversions — use them for unit consistency.
 - `tones` (`@cached_property`) extracts up to `MAX_TONES` peaks in descending power order and zeroes out their bins in a local copy to compute `self.noise`.
 
